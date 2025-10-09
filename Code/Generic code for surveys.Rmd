@@ -1,0 +1,526 @@
+---
+title: 'Condition Outbreak - YYYYMM Outbreak Name - PHESS 3202XXXXXXXX'
+Output:
+  html_document: 
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: hide
+knit: (function(input, ...) {
+  rmarkdown::render(input, output_file = "Outbreak Name", output_dir = "../Output") })
+  
+#TOC = floating table of contents
+---
+
+
+```{css, echo = FALSE}
+/* HTML Output formatting */ 
+h1.title {
+  font-weight: bold;
+  font-size: 20px;
+  color: #191d43;
+}
+
+h1 {
+  font-weight: bold;
+  font-size: 20px;
+  color: #191d43;
+}
+
+h2 {
+  font-weight: bold;
+  font-size: 20px;
+  color: #5bc788;
+}
+
+h3 {
+  font-weight: bold;
+  font-size: 16px;
+  color: #5bc788;
+}
+
+h4 {
+  font-style: italic;
+  font-size: 12px;
+}
+
+body {
+  font-size: 14px;
+}
+```
+
+```{r, echo = FALSE, message = FALSE}
+# Hides warnings and messages, customises display for blank values in tables
+knitr::opts_chunk$set(echo    = TRUE, 
+                      warning = FALSE, 
+                      message = FALSE)
+
+options(knitr.kable.NA = '--')
+
+#Sets the file path - change if necessary
+here::i_am("Code/data_analysis_gastro_test.Rmd")
+```
+
+
+```{r setup, include=FALSE}
+# Part 1: Packages ---------------------------------------------------------------------
+if (!require("pacman")) install.packages("pacman")
+
+pacman::p_load(tidyverse,
+               xfun,
+               rmarkdown,
+               here,
+               readxl,
+               janitor,
+               lubridate,
+               scales,
+               rmarkdown,
+               knitr,
+               rlang,
+               kableExtra,
+               patchwork,
+               apyramid,
+               sf,
+               ggthemes,
+               ggtext)
+
+```
+
+```{r}
+# Part 2: Data cleaning ---------------------------------------------------------------------
+
+# Update the dates and times in each line of code
+# Delete any lines that are not relevant to your outbreak
+
+# Date and time of report generation
+datetime_update <- "data as of 2:30pm 02/05/2025"
+
+# Venue/event
+venue_name <- "Venue Name"
+
+# Date of attendance - only use for common events
+# date_event_1 <- lubridate::ymd("2025-03-27")
+
+# x-axis limits for epi curves (dates only)
+date_epicurve_start <- lubridate::ymd(paste0("2025-03-26"))
+date_epicurve_end   <- lubridate::ymd(paste0("2025-04-04"))
+
+# x-axis limits for epi curves (dates and times)
+datetime_epicurve_start <- lubridate::ymd_hms(paste0("2025-03-25", "00:00:00"))
+datetime_epicurve_end   <- lubridate::ymd_hms(paste0("2025-04-04", "00:00:00"))
+
+datetime_swimmer_start <- lubridate::ymd(paste0("2025-03-21"))
+datetime_swimmer_end   <- lubridate::ymd(paste0("2025-04-11"))
+
+```
+
+
+```{r}
+# Read in linelist
+linelist_raw <- readxl::read_xlsx(paste0(here::here(), "/Data/MisterMinh_Linelist_Salmonella_Outbreak_20250428.xlsx"),
+                                  sheet     = 1,
+                                  skip      = 2,
+                                  guess_max = min(100000, Inf)) %>% 
+  #
+  janitor::clean_names()
+```
+
+
+```{r}
+
+#Convert linelist from wide to long format
+
+
+
+
+
+```
+
+
+
+```{r}
+# Do not panic about the warning message - this is expected when you have missing symptom onset/end dates or times
+# Suggest checking the linelist_clean dataset for any "Not stated" or missing values - these may be data errors that need correcting
+
+linelist_clean <- linelist_raw %>%
+  dplyr::mutate(
+    date_of_birth      = lubridate::ymd(date_of_birth),
+    #
+    date_attended1      = lubridate::ymd(date_attended1),
+    date_attended2      = lubridate::ymd(date_attended2),
+    symptom_onset_date = lubridate::ymd(symptom_onset_date),
+    symptom_end_date   = lubridate::ymd(symptom_end_date),
+    #
+    symptom_onset_time = hms::as_hms(symptom_onset_time),
+    symptom_end_time   = hms::as_hms(symptom_end_time),
+    #
+    symptom_onset_datetime = lubridate::ymd_hms(paste0(symptom_onset_date, symptom_onset_time)),
+    symptom_end_datetime   = lubridate::ymd_hms(paste0(symptom_end_date, symptom_end_time)),
+    #
+    age_years = (date_of_birth %--% date_attended1) / years(1),
+    #
+    age_group = factor(dplyr::case_when(
+      age_years < 10  ~ "0-9 years",
+      age_years < 20  ~ "10-19 years",
+      age_years < 30  ~ "20-29 years",
+      age_years < 40  ~ "30-39 years",
+      age_years < 50  ~ "40-49 years",
+      age_years < 60  ~ "50-59 years",
+      age_years < 70  ~ "60-69 years",
+      age_years < 80  ~ "70-79 years",
+      age_years < 90  ~ "80-89 years",
+      age_years >= 90 ~ "90+ years",
+      TRUE            ~ "Not stated"),
+      levels = c("0-9 years",
+                 "10-19 years",
+                 "20-29 years",
+                 "30-39 years",
+                 "40-49 years",
+                 "50-59 years",
+                 "60-69 years",
+                 "70-79 years",
+                 "80-89 years",
+                 "90+ years",
+                 "Not stated")),
+    #
+    sex = factor(dplyr::case_when(
+      stringr::str_detect(sex, "(?i)m") ~ "Male",
+      stringr::str_detect(sex, "(?i)f") ~ "Female",
+      TRUE                              ~ "Not stated"),
+      levels = c("Male",
+                 "Female",
+                 "Not stated")),
+    #
+    symptomatic = factor(dplyr::case_when(
+      is.na(symptomatic)                        ~ NA_character_,
+      stringr::str_detect(symptomatic, "(?i)n") ~ "No",
+      stringr::str_detect(symptomatic, "(?i)y") ~ "Yes",
+      TRUE                                      ~ NA_character_),
+      levels = c("Yes",
+                 "No")))
+```
+
+# Demographics
+
+**Sex distribution of people attending `r venue_name`, `r datetime_update`**
+
+```{r}
+# Gender
+results_sex <- linelist_clean %>%
+  dplyr::group_by(sex, symptomatic) %>%
+  dplyr::summarise(n = n(), .groups = "keep") %>%
+  dplyr::ungroup() %>%
+  #
+  tidyr::complete(sex, symptomatic,
+                  fill = list(n = 0)) %>%
+  #
+  tidyr::pivot_wider(names_from   = symptomatic,
+                     names_prefix = "n_",
+                     values_from  = n) %>%
+  #
+  janitor::clean_names() %>%
+  #
+  dplyr::mutate(variable = "Sex",
+                value    = sex,
+                #
+                percent_yes = (n_yes / sum(n_yes) * 100),
+                percent_no  = (n_no / sum(n_no) * 100)) %>%
+  #
+  dplyr::select(variable,
+                value,
+                n_yes,
+                percent_yes,
+                n_no,
+                percent_no)
+
+results_sex %>%
+  dplyr::mutate(percent_yes = round(percent_yes, digits = 1),
+                percent_no  = round(percent_no, digits = 1)) %>%
+  #
+  dplyr::select(-variable) %>% 
+  #
+  knitr::kable(table.attr = "style = \"color: black;\"",
+               align      = "lrrrr",
+               col.names  = c("Sex", "n", "%", "n", "%")) %>%
+  #
+  kableExtra::kable_styling(full_width = FALSE,
+                            html_font  = "Arial",
+                            font_size  = 14) %>%
+  #
+  kableExtra::column_spec(1:5,
+                          width = "1in") %>%
+  #
+  kableExtra::row_spec(row  = 0,
+                       bold = TRUE) %>%
+  #
+  kableExtra::row_spec(row       = 3,
+                       extra_css = "border-bottom: 2px solid lightgray;") %>%
+  #
+  kableExtra::add_header_above(c(" " = 1, "Symptomatic" = 2, "Not symptomatic" = 2))
+```
+
+**Number of people reporting each symptom, `r datetime_update`**
+
+
+```{r, warning = FALSE}
+# Update chart title text (above this code block) if required
+# Update footnotes (below this code block) if required
+
+# Add any additional symptom columns to the dplyr::summarise() statement
+# This section will need to be modified if additional symptom variables are included - row_spec() statements
+
+symptoms <- linelist_clean %>% 
+  dplyr::filter(symptomatic == "Yes") %>%
+  #
+  dplyr::summarise(vomiting   = sum(stringr::str_detect(vomiting, "(?i)y"), na.rm = TRUE),
+                   diarrhoea  = sum(stringr::str_detect(diarrhoea, "(?i)y"), na.rm = TRUE),
+                   nausea     = sum(stringr::str_detect(nausea, "(?i)y"), na.rm = TRUE),
+                   anorexia   = sum(stringr::str_detect(anorexia, "(?i)y"), na.rm = TRUE),
+                   fever      = sum(stringr::str_detect(fever, "(?i)y"), na.rm = TRUE),
+                   headache   = sum(stringr::str_detect(headache, "(?i)y"), na.rm = TRUE),
+                   lethargy   = sum(stringr::str_detect(lethargy, "(?i)y"), na.rm = TRUE),
+                   abdo_pain = sum(stringr::str_detect(abdo_pain, "(?i)y"), na.rm = TRUE)) %>%
+  #
+  tidyr::pivot_longer(everything(),
+                      names_to = "symptom") %>% 
+  #
+  dplyr::mutate(symptom = stringr::str_to_sentence(symptom),
+                symptom = stringr::str_replace(symptom, "_", " ")) %>%
+  #
+  dplyr::mutate(percent = round(value / (sum(linelist_clean$symptomatic == "Yes")) * 100, digits = 1)) %>% 
+  #
+  dplyr::arrange(desc(percent), symptom) 
+
+symptoms %>% 
+  knitr::kable(table.attr = "style = \"color: black;\"",
+               align      = "lrr",
+               col.names  = c("Symptom", "n", "%")) %>%
+  #
+  kableExtra::kable_styling(full_width = FALSE,
+                            html_font  = "Arial",
+                            font_size  = 14) %>%
+  #
+  kableExtra::column_spec(2:3,
+                          width = "1.0in") %>%
+  #
+  kableExtra::row_spec(row       = 0,
+                       bold      = TRUE,
+                       extra_css = "border-top: 2px solid lightgray; border-bottom: 2px solid lightgray;") %>% 
+  #
+  kableExtra::row_spec(row       = 8,
+                       extra_css = "border-bottom: 2px solid lightgray;") %>% 
+  #
+  kableExtra::add_header_above(c(" " = 1, "People reporting symptom" = 2))
+```
+
+
+
+
+**Age distribution of people attending `r venue_name`, `r datetime_update`**
+
+```{r}
+# Age group
+results_age <- linelist_clean %>%
+  dplyr::group_by(age_group, symptomatic) %>%
+  dplyr::summarise(n = n(), .groups = "keep") %>%
+  dplyr::ungroup() %>%
+  #
+  tidyr::complete(age_group, symptomatic,
+                  fill = list(n = 0)) %>%
+  #
+  tidyr::pivot_wider(names_from   = symptomatic,
+                     names_prefix = "n_",
+                     values_from  = n) %>%
+  #
+  janitor::clean_names() %>%
+  #
+  dplyr::mutate(variable = "Age group",
+                value    = age_group,
+                #
+                percent_yes = (n_yes / sum(n_yes) * 100),
+                percent_no  = (n_no / sum(n_no) * 100)) %>%
+  #
+  dplyr::select(variable,
+                value,
+                n_yes,
+                percent_yes,
+                n_no,
+                percent_no)
+
+results_age %>%
+  dplyr::mutate(percent_yes = round(percent_yes, digits = 1),
+                percent_no  = round(percent_no, digits = 1)) %>%
+  #
+  dplyr::select(-variable) %>% 
+  #
+  knitr::kable(table.attr = "style = \"color: black;\"",
+               align      = "lrrrr",
+               col.names  = c("Age group", "n", "%", "n", "%")) %>%
+  #
+  kableExtra::kable_styling(full_width = FALSE,
+                            html_font  = "Arial",
+                            font_size  = 14) %>%
+  #
+  kableExtra::column_spec(1:5,
+                          width = "1in") %>%
+  #
+  kableExtra::row_spec(row  = 0,
+                       bold = TRUE) %>%
+  #
+  kableExtra::row_spec(row       = 11,
+                       extra_css = "border-bottom: 2px solid lightgray;") %>%
+  #
+  kableExtra::add_header_above(c(" " = 1, "Symptomatic" = 2, "Not symptomatic" = 2))
+
+```
+
+***
+
+# Swimlane plot
+
+**Salmonella Singapore cases attending `r venue_name` prior to symptom onset, `r datetime_update`**
+
+```{r}
+#
+linelist_clean %>% 
+  dplyr::filter(!is.na(symptom_onset_date)) %>%
+  #
+  dplyr::mutate(case_number = paste0(phess_id)) %>% 
+  #
+  ggplot() +
+  #
+  geom_segment(aes(x    = date_attended1,
+                   xend = symptom_onset_date,
+                   y    = forcats::fct_reorder(case_number, symptom_onset_date),
+                   yend = forcats::fct_reorder(case_number, symptom_onset_date),
+                   col  = "Incubation period"),
+               linewidth = 5) +
+  #
+  scale_color_manual(name   = NULL,
+                     labels = c("Incubation period"),
+                     values = c("#00C19A")) +
+  #
+  ggnewscale::new_scale_colour() +
+  #
+  geom_point(aes(x     = date_attended1,
+                 y     = case_number,
+                 col   = "Date attended venue",
+                 shape = "Date attended venue"),
+             size   = 2,
+             stroke = 2) +
+  # 
+  geom_point(aes(x     = date_attended2,
+                 y     = case_number,
+                 col   = "Date attended venue",
+                 shape = "Date attended venue"),
+             size   = 2,
+             stroke = 2) +
+  
+  #
+   geom_point(aes(x     = symptom_onset_date,
+                 y     = case_number,
+                 col   = "Symptom onset date",
+                 shape = "Symptom onset date"),
+             size   = 2,
+             stroke = 2) +
+  #
+  
+    scale_color_manual(name   = NULL,
+                     labels = c("Date attended venue", "Symptom onset date"),
+                     values = c("#000000", "#8494FF")) +
+  
+  #
+  scale_shape_manual(name   = NULL,
+                     values = c("Date attended venue" = 16, 
+                                "Symptom onset date" = 16)) +
+  #
+  scale_x_date(date_breaks = "1 day", date_labels = "%d-%m-%y", limits = c(datetime_swimmer_start, datetime_swimmer_end)) +
+  #
+  labs(title = NULL,
+       x     = NULL,
+       y     = NULL) +
+  #
+  theme_classic() +
+  #
+  theme(axis.text   = element_text(size = 9),
+        axis.text.x = element_text(angle = 90,
+                                   vjust = 0.5,
+                                   hjust = 1),
+        #
+        plot.margin = margin(0, 0, 0, 0, "null"),
+        #
+        legend.position = "bottom")
+```
+
+***
+
+# Epicurves
+
+**Salmonella Singapore cases attending `r venue_name` by symptom onset date, `r datetime_update`**
+
+```{r, warning = FALSE}
+# 
+linelist_clean %>%
+  dplyr::filter(symptomatic == "Yes") %>%
+  dplyr::filter(!is.na(symptom_onset_date)) %>%
+  dplyr::filter(lphu %in% c("NEPHU", "SEPHU", "WPHU")) %>%
+  #
+  ggplot() +
+  #
+  geom_histogram(aes(x = symptom_onset_date, fill = lphu),
+                  color    = "black",
+                 alpha    = 0.75,
+                 binwidth = 1) +
+  #
+  scale_x_date(limits      = c(date_epicurve_start, date_epicurve_end),
+               expand      = expansion(add = c(0.5, 0.5)),
+               date_breaks = "1 day",
+               date_labels = "%d-%m-%y") +
+  #
+  scale_y_continuous(limits = c(0, 3),
+                     breaks = scales::breaks_width(1),
+                     expand = expansion(add = c(0, 0.25))) +
+  #
+  labs(title = " ",
+       x     = "Symptom onset date",
+       y     = "Number of cases") +
+  #
+  theme_classic() +
+  theme(axis.title  = element_text(size = 9),
+        axis.text   = element_text(size = 8),
+        axis.text.x = element_text(angle = 90,
+                                   vjust = 0.5,
+                                   hjust = 1),
+        #
+        plot.margin = margin(0, 0, 0, 0, "null"),
+        #
+        legend.title = element_blank(),
+        #
+        legend.position = "bottom")
+
+```
+
+
+<div class="tocify-extend-page" data-unique="tocify-extend-page" style="height: 0;"></div>
+
+
+
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
