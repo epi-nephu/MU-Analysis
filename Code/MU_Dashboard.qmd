@@ -1,0 +1,546 @@
+---
+title: "MU Analysis NEPHU Catchment"
+author: "Prepared by: Des Gul"
+date: "`r format(Sys.Date(), '%d %b %Y')`"
+format:
+  dashboard:
+    logo: "NEPHU LOGO.png"
+---
+
+```{r}
+library(here)
+library(tidyverse)
+library(janitor)
+library(sf)
+library(flextable)
+library(plotly)
+
+```
+
+
+```{r dbcon, include=FALSE, eval=FALSE}
+con <- DBI::dbConnect(odbc::odbc(), "PHAR proxy")
+
+```
+
+``` {r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, fig.height=6, fig.width=13, ft.align="left", connection="con")
+
+```
+
+
+```{r extract_data, eval=FALSE}
+mu_raw <- DBI::dbGetQuery(con, 
+                             "
+                             SELECT * FROM dh_public_health.phess_release.caseevents ce 
+                             LEFT JOIN dh_public_health.phess_release.caseexposures exp ON ce.EVENT_ID = exp.EVENT_ID 
+                             LEFT JOIN dh_public_health.phess_release.events_buruli_ulcer bu ON ce.EVENT_ID = bu.EVENT_ID
+                             LEFT JOIN dh_public_health.phess_release.events_buruli_ulcer_exposure buex ON ce.EVENT_ID = buex.EVENT_ID
+                             -- LEFT JOIN dh_public_health.phess_release.caselabresults lab ON ce.EVENT_ID = lab.EVENT_ID
+                             WHERE ce.CONDITION = 'Mycobacterium ulcerans' 
+                             AND EVENT_DATE BETWEEN '2020-01-01' AND '2025-08-31' 
+                             ORDER BY EVENT_DATE DESC; 
+                             "
+                             )
+
+```
+
+```{r, eval=TRUE}
+#saveRDS(mu_raw, here::here("Data", "MU_raw_nolab.rds"))
+
+#mu_raw <- readRDS(here::here("Data", "MU_raw.rds"))
+mu_raw <- readRDS(here::here("Data", "MU_raw_nolab.rds"))
+
+```
+
+
+```{r set params}
+start_date <- ymd("2022-01-01")
+min_date <- start_date
+max_date <- ymd("2025-08-31")
+min_date_1yr <- max_date - years(1) + days(1)
+
+```
+
+
+``` {r configure}
+# setup factor variables levels
+nephu_lgas <- c("Banyule (C)", "Boroondara (C)", "Darebin (C)", "Hume (C)", "Knox (C)", "Manningham (C)", "Maroondah (C)", "Nillumbik (S)", "Whitehorse (C)", "Whittlesea (C)", "Yarra (C)", "Yarra Ranges (S)")
+
+nephu_lgas_short <- c("Banyule", "Boroondara", "Darebin", "Hume", "Knox", "Manningham", "Maroondah", "Nillumbik", "Whitehorse", "Whittlesea", "Yarra", "Yarra Ranges")
+
+agecat5_levels <- c("0-4", "5-9", "10-14", "15-19", "20-24", "25-29", "30-34", "35-39", "40-44", "45-49", "50-54", "55-59", "60-64", "65-69", "70-74", "75-79", "80-84", "85+")
+
+# mu_exp <- mu_data_config %>% 
+#   select(event_id, risk_factor, primary_exposure, name, risk_factors_exposure_site, endemic_areas_12months, endemic_areas_type_of_contact, method_of_risk_data_collection)
+# 
+# mu_gilmour <- mu_raw %>% 
+#   clean_names() %>% 
+#   filter(event_id=="320255983783")
+# 
+# names(mu_data_config)
+
+# reconfigure data to include age grps, factors and epi-dates variables
+mu_data_config <- mu_raw %>% 
+  clean_names() %>% 
+  remove_empty("cols") %>% 
+  select(-c(created_by, create_date, modified_by, modification_date, status, starts_with("enhanced_surveillance"), discharge_summary_requested, 
+  unid, event_id_2, status_2, event_id_3, 
+  event_id_4, party_id)) %>% 
+  mutate(across(where(is.POSIXct), ymd)) %>% 
+  rename(defn = event_classification, 
+         age = age_years, 
+         atsi = indigenous_status, 
+         cob = country_of_birth) %>% 
+  mutate(agecat5 = case_when(between(age, 0, 4) ~ "0-4", 
+                             between(age, 5, 9) ~ "5-9",
+                             between(age, 10, 14) ~ "10-14",
+                             between(age, 15, 19) ~ "15-19",
+                             between(age, 20, 24) ~ "20-24",
+                             between(age, 25, 29) ~ "25-29",
+                             between(age, 30, 34) ~ "30-34",
+                             between(age, 35, 39) ~ "35-39",
+                             between(age, 40, 44) ~ "40-44",
+                             between(age, 45, 49) ~ "45-49",
+                             between(age, 50, 54) ~ "50-54",
+                             between(age, 55, 59) ~ "55-59",
+                             between(age, 60, 64) ~ "60-64",
+                             between(age, 65, 69) ~ "65-69",
+                             between(age, 70, 74) ~ "70-74",
+                             between(age, 75, 79) ~ "75-79",
+                             between(age, 80, 84) ~ "80-84",
+                             between(age, 85, 99) ~ "85+", 
+                             TRUE ~ NA_character_), 
+         agecat5 = factor(agecat5, levels=agecat5_levels), 
+         aus_born = case_when(cob=="Australia" ~ "Australia", 
+                              cob=="Not Stated" ~ "Not Stated", 
+                              cob=="Unknown" ~ "Not Stated", 
+                              TRUE ~ "Overseas"), 
+         aus_born = factor(aus_born, levels=c("Australia", "Overseas", "Not stated")), 
+         defn = factor(defn, levels=c("Confirmed", "Probable", "Suspected", "Rejected", "Not notifiable")), 
+         sex = factor(sex, levels=c("Female", "Male", "Not stated", "Other")), 
+         atsi = fct_collapse(factor(atsi, levels=c("Aboriginal and Torres Strait Islander origin", "Aboriginal but not Torres Strait Islander origin", "Not Aboriginal or Torres Strait Islander", "Missing/Not Stated")), `Aboriginal and/or Torres Strait Islander` = c("Aboriginal and Torres Strait Islander origin", "Aboriginal but not Torres Strait Islander origin")), 
+         epi_MY = my(paste(month(event_date), year(event_date), sep="-")), 
+         epiyear = epiyear(event_date), 
+         epi_Y = ymd(paste0(epiyear, "-01-01")), 
+         epiweek = epiweek(event_date), 
+         epimonth = month(event_date, label=TRUE), 
+         epi_WY = ceiling_date(event_date, "week") -1, 
+         mth_yr = paste(epimonth, epiyear)) %>% 
+  filter(defn %in% c("Confirmed", "Probable"))
+
+#writexl::write_xlsx(mu_data_config, "mu_data_config.xlsx")
+
+#mu_741 <- filter(mu_data_config, event_id=="320255926741")
+
+```
+
+```{r}
+mu_nephu <- mu_data_config %>% 
+  filter(lga %in% nephu_lgas) %>% 
+  remove_empty("cols") %>% 
+  filter(primary_exposure=="Primary") %>% 
+  distinct(event_id, .keep_all=TRUE)
+
+mu_vic <- mu_data_config %>% 
+  filter(primary_exposure=="Primary") %>% 
+  distinct(event_id, .keep_all=TRUE)
+
+mu_lphu <- mu_vic %>% 
+  #filter(event_date >= "2022-07-01") %>% # date when codes no longer used for lphu
+  select(event_id, event_date, epi_MY, lphu) %>% 
+  mutate(lphu = factor(lphu, levels=c("NEPHU", "SEPHU", "WPHU", "BSWPHU", "GPHU", "GVPHU", "GWSMPHU", "LMPHU")))
+
+```
+
+``` {r}
+mu_nephu_vic_counts_mth <- mu_vic %>% 
+  #filter(defn %in% c("Confirmed", "Probable")) %>% 
+  group_by(epi_MY) %>% 
+  summarise(total = n()) %>% 
+  left_join(mu_nephu %>% group_by(epi_MY) %>% summarise(total_nephu = n()), by="epi_MY") %>% 
+  replace_na(replace=list(total_nephu=0)) %>% 
+  mutate(pct_nephu = round(total_nephu/total*100, 1))
+
+
+mu_nephu_vic_counts_yr <- tabyl(mu_vic, epiyear) %>% 
+  left_join(tabyl(mu_nephu, epiyear), by="epiyear") %>% 
+  #add_column(., tabyl(mu_nephu %>% filter(defn %in% c("Confirmed", "Probable")), epiyear)) %>% 
+  adorn_totals("row") %>% 
+  rename(VIC = n.x, 
+         NEPHU = n.y) %>% 
+  select(epiyear, VIC, NEPHU) %>% 
+  mutate(pct_nephu = round(NEPHU/VIC*100, 1)) %>% 
+  flextable() %>% 
+  set_header_labels(epiyear = "Year", pct_nephu = "% of VIC") %>% 
+  autofit() %>% 
+  #add_footer_lines("2024 is part year from Jan to Mar") %>% 
+  add_footer_lines("Cases include Confirmed and Probable cases")
+
+#mu_nephu_vic_counts_yr
+
+```
+
+# Case Numbers
+
+Data from `r format(min_date, '%b %Y')` - `r format(max_date, '%b %Y')`
+
+``` {r epi curve}
+# A function factory for getting integer y-axis values (https://gist.github.com/jhrcook/eb7b63cc57c683a6eb4986c4107a88ec)
+integer_breaks <- function(n = 5, ...) {
+    fxn <- function(x) {
+        breaks <- floor(pretty(x, n, ...))
+        names(breaks) <- attr(breaks, "labels")
+        breaks
+    }
+    return(fxn)
+}
+
+# create the breaks for histogram
+epimonth_breaks_nephu <- c(seq.Date(from=min(mu_nephu$epi_MY), to=max(mu_nephu$epi_MY), by="month"), 
+                           max(mu_nephu$epi_MY) + months(1))
+
+epimonth_breaks_lphu <- c(seq.Date(from=min(mu_lphu$epi_MY), to=max(mu_lphu$epi_MY), by="month"), 
+                          max(mu_lphu$epi_MY) + months(1))
+
+# create scale factor for sec axis
+sec_sf <- max(mu_nephu_vic_counts_mth$total_nephu) / max(mu_nephu_vic_counts_mth$pct_nephu)
+
+# plot of nephu cases over time with pct of VIC cases on sec axis
+nephu_plot <- ggplot(data = mu_nephu_vic_counts_mth) +
+  geom_col(aes(x = epi_MY, y=total_nephu, group = 1, fill = "MU cases"), col="gray") + 
+  geom_line(aes(x= epi_MY, y=pct_nephu * sec_sf, group=1, col="percentage")) + 
+  scale_fill_manual(values="#F8766D", name="") + 
+  scale_colour_manual(values=c("#619CFF"), name="") + 
+  scale_x_date(expand=c(0,0), date_breaks="3 months", date_minor_breaks="month", date_labels="%b %Y", name="") +
+  scale_y_continuous(expand=c(0,0), name="Monthly notified cases", breaks=integer_breaks(), 
+                     sec.axis = sec_axis(~./sec_sf, name="% of Vic cases")) + 
+  cowplot::theme_cowplot() + 
+  theme(plot.caption = element_text(size=11), 
+        axis.text.x = element_text(angle = 45, hjust=1))
+
+# epicurve of MU cases by LPHU
+lphu_plot <- ggplot(data = mu_lphu %>% filter(!is.na(lphu))) +
+  geom_histogram(aes(x = epi_MY, group = fct_rev(lphu), fill = lphu), breaks=epimonth_breaks_lphu, closed="left", col="gray", boundary=-days(14)) +
+  #scale_fill_manual(values=c("#F8766D", "#00BFC4", "#619CFF"), name="Condition") +
+  scale_x_date(expand=c(0,0), date_breaks="3 months", date_labels="%b %Y", name="") +
+  scale_y_continuous(expand=c(0,0), breaks=integer_breaks(), name="Monthly notified cases") + 
+  scale_fill_discrete(name="LPHU", guide = guide_legend(reverse = TRUE)) + 
+  #theme_minimal() + 
+  cowplot::theme_cowplot() + 
+  theme(plot.caption = element_text(size=11), 
+        axis.text.x = element_text(angle = 45, hjust=1, size=10)) + 
+  labs(caption = "Note that prior to July 2022 (before integration), data for allocated LPHU is not complete.")
+
+```
+
+### Column1
+
+```{r}
+#| title: "Monthly cases in NEPHU catchment and percentage of VIC cases (line) "
+
+# cat("title=", paste0("Monthly cases in NEPHU catchment from ", format(min_date, '%b %Y'), " - ", format(max_date, '%b %Y'), " and percentage of VIC cases"))
+
+
+nephu_plot
+
+```
+
+
+### Column2
+
+```{r}
+#| title: "Cumulative cases by month in NEPHU"
+
+#cat("title=", paste0("Cumulative cases by month in NEPHU from ", format(min_date, "%b %Y"), " - ", format(max_date, "%b %Y")))
+
+cumsum_data <- mu_nephu_vic_counts_mth %>% 
+  mutate(yr = year(epi_MY), 
+         mth = month(epi_MY, label=TRUE, abbr=TRUE)) %>% 
+  group_by(yr) %>% 
+  mutate(cum_count = cumsum(total_nephu))
+
+cumsum_plot <- ggplot(cumsum_data) + 
+  geom_line(aes(x=mth, y=cum_count, group=factor(yr), col=factor(yr)), linewidth=1) + 
+  cowplot::theme_cowplot() + 
+  theme(plot.title = element_text(size=12)) + 
+  labs(title="Cumulative case numbers by month in NEPHU", 
+         #caption=paste0("Data period: ", start_date, " to ", max_date), 
+         x="", 
+         y="Cumulative case numbers", 
+         col="Year")
+
+ggplotly(cumsum_plot)
+
+```
+
+# Demographics and Risk factors {orientation="columns"}
+
+## Column
+
+```{r pyramid}
+#| title: "Demographic distribution of cases in NEPHU"
+
+# subset data
+pyramid.dat <- mu_nephu %>% 
+  select(age, agecat5, sex, defn) %>% 
+  filter(sex %in% c("Male", "Female")) %>% 
+  mutate(sex = fct_rev(fct_drop(sex)), 
+         defn = fct_drop(defn))
+
+# plot
+# apyramid::age_pyramid(data=pyramid.dat, age_group="agecat5", split_by="sex", 
+#                       stack_by="defn", show_midpoint=FALSE) + 
+#   cowplot::theme_cowplot() + 
+#   labs(y="cases", x="age group (years)", title="", fill="Case \nClassification") 
+
+apyramid::age_pyramid(data=pyramid.dat, age_group="agecat5", split_by="sex", 
+                      show_midpoint=FALSE) + 
+  cowplot::theme_cowplot() + 
+  labs(y="cases", x="age group (years)", title="", fill="Sex", caption="Data from Jan 2020 - Aug 2025") 
+
+```
+
+
+```{r risk factors}
+resid_risk <- mu_nephu %>% 
+  filter(risk_factor=="Residence")
+
+aus_travel_risk <- mu_nephu %>% 
+  filter(risk_factor=="Travel within Australia")
+
+exp_lga_levels = c("Bayside", "Kingston", "Moonee Valley", "Frankston", "Queenscliff", "Greater Geelong", "Surf Coast", "Mornington Peninsula", "East Gippsland", "Maroondah", "Banyule", "Hume", "Whitehorse", "Yarra Ranges")
+
+risk_factor_levels = c("Holiday residence", "Travel within Australia", "Residence", "Risk unable to be determined")
+
+endemic_areas = c("Bellarine Peninsula", "Mornington Peninsula", "Frankston area", "Geelong suburbs", "Gippsland", "Phillip Island", "Surf Coast", 
+                  "Inner Melbourne", "Melbourne South East suburbs", "Interstate", "Overseas", "Other", "No travel to known endemic areas")
+
+
+mu_nephu_risk <- mu_nephu %>% 
+  select(event_id, event_date, risk_factor, primary_exposure, risk_factors_exposure_site, name, city_2, postcode_2, lga_2, risk_factors_exposure_site_longitude, 
+         risk_factors_exposure_site_latitude, endemic_areas_12months, events_caused_infection_type, exposure_start, exposure_end) %>% 
+  mutate(risk_factor = factor(risk_factor, levels=risk_factor_levels), 
+         exp_lga = str_remove(lga_2, pattern="[:space:]\\([:upper:]\\)"), 
+         exp_lga = case_when(lga_2=="Unknown Victoria" ~ "Mornington Peninsula", # recode as names states Mornington Peninsula
+                             lga_2=="Queenscliffe (B)" ~ "Queenscliff", # correction of lga spelling
+                             TRUE ~ exp_lga), 
+         exp_lga = factor(exp_lga, levels=exp_lga_levels), 
+         endemic_areas_12months = factor(endemic_areas_12months, levels=endemic_areas))
+
+```
+
+
+``` {r}
+#| title: "Risk factors for NEPHU cases"
+
+risk_table <- tabyl(mu_nephu_risk, risk_factor) %>% 
+  mutate(percent = round(100*percent, 0)) %>% 
+  filter(!is.na(risk_factor)) 
+  
+
+flextable(risk_table) %>% 
+  set_header_labels(risk_factor = "Risk factor", n = "Cases", percent = "%") %>% 
+  autofit()
+```
+
+
+## Column2
+
+```{r}
+cat("title=", paste0("Monthly cases by risk factor from ", format(min_date, '%b %Y'), " - ", format(max_date, '%b %Y')))
+
+mu_nephu_risk_counts <- tabyl(mu_nephu, epi_MY, risk_factor) %>% 
+  pivot_longer(cols=-epi_MY, names_to="riskfactor", values_to="count")
+
+rf_plot <- ggplot(data = mu_nephu_risk_counts) +
+  geom_col(aes(x = epi_MY, y=count, fill = riskfactor), col="gray") + 
+  #geom_line(aes(x=epi_MY, y=count, col=riskfactor), linewidth=1) + 
+  #geom_line(aes(x= epi_MY, y=pct_nephu * sec_sf, group=1, col="percentage")) + 
+  scale_fill_discrete(name="Primary Risk Factor") + 
+  #scale_color_discrete(name="Primary Risk Factor") + 
+  #scale_colour_manual(values=c("#619CFF"), name="") + 
+  scale_x_date(expand=c(0,0), date_breaks="3 months", date_minor_breaks="month", date_labels="%b %Y", name="") +
+  scale_y_continuous(expand=c(0,0), name="Monthly notified cases", breaks=integer_breaks()) + 
+  cowplot::theme_cowplot() + 
+  theme(plot.caption = element_text(size=11), 
+        axis.text.x = element_text(angle = 45, hjust=1), 
+        legend.position = "bottom")
+
+ggplotly(rf_plot)
+
+```
+
+
+# Exposure Locations
+
+``` {r}
+#| title: "Exposure locations (LGAs) in endemic areas for NEPHU cases"
+
+risk_endemic_areas_table <- tabyl(mu_nephu_risk, endemic_areas_12months) %>% 
+  mutate(percent = round(100*percent, 0)) %>% 
+  filter(!is.na(endemic_areas_12months)) %>% 
+  select(-valid_percent)
+
+flextable(risk_endemic_areas_table) %>% 
+  set_header_labels(endemic_areas_12months = "Endemic area", n = "Cases", percent = "%") %>% 
+  autofit()
+
+```
+<br>
+
+<!--
+The majority of cases in NEPHU acquired *M. ulcerans* whilst visiting an endemic area.  
+Such visits include having a holiday residence in an endemic area or travelling to an endemic area for holiday, recreational activity, visiting friends and family, among others.  Some cases may also have previously lived in an endemic area during their acquisition period, before to the NEPHU catchment.  
+
+Only `r risk_table[4,2]` cases (`r risk_table[4,3]`%), had risk unable to be determined as they have not travelled to any endemic areas. Hence, exposure area is taken as their place of residence (i.e. NEPHU LGA)
+-->
+<br>
+
+## Row2
+
+
+```{r}
+#| title: "Exposure areas for all NEPHU cases"
+
+tabyl(mu_nephu_risk %>% filter(!is.na(risk_factor)), risk_factor, exp_lga) %>% 
+  flextable() %>% 
+  set_header_labels(risk_factor = "", NA_ = "") %>% 
+  add_header_row(values=c("Risk Factor", "Endemic LGAs", "", "", "", "", "", "", "", "", 
+                          "Non-Endemic LGAs", "", "", "", "", 
+                          "Unknown"), top=TRUE) %>% 
+  merge_at(i=1, j=2:10, part="header") %>% 
+  merge_at(i=1, j=11:15, part="header") %>% 
+  merge_v(j=1, part="header") %>% 
+  align(align="center", part="header") %>% 
+  color(i=1, j=2, part="header", color="red") %>% 
+  color(i=2, j=2:10, part="header", color="red") %>% 
+  autofit() %>% 
+  add_footer_lines("Travel within Australia denote travel to endemic areas for holiday, recreation, visiting friends, etc") %>% 
+  add_footer_lines("Residence denote residence of case during acquisition period")
+```
+
+# Risks unable to be determined
+
+
+```{r}
+#| title: "Summary of cases with risk unable to be determined"
+
+risk_utd_id <- filter(mu_nephu_risk, risk_factor=="Risk unable to be determined")$event_id
+
+risk_utd_table <- mu_nephu %>% 
+  filter(event_id %in% risk_utd_id)
+risk_utd_table_short <- risk_utd_table %>% 
+  select(event_id, event_date, date_of_onset, age, sex, postcode, lga)
+
+flextable(risk_utd_table_short) %>% 
+  set_header_labels(event_id = "PHESS ID", event_date = "Event date", date_of_onset = "Symptom onset date", age="Age", sex="Sex", postcode="Residential postcode", lga="LGA") %>% 
+  autofit()
+```
+
+
+
+# Map
+
+
+```{r}
+mu_exp_loc <- mu_nephu %>% 
+  select(event_id, event_date, postcode, lga, latitude, longitude, risk_factor, primary_exposure, risk_factors_exposure_site, city_2, postcode_2, lga_2, 
+         risk_factors_exposure_site_latitude, risk_factors_exposure_site_longitude) 
+
+mu_exp.sf <- mu_exp_loc %>% 
+  filter(!is.na(risk_factors_exposure_site_latitude)) %>% 
+  st_as_sf(., coords=c("risk_factors_exposure_site_longitude", "risk_factors_exposure_site_latitude"), crs=st_crs(4326))
+
+mu_resid.sf <- mu_exp_loc %>% 
+  st_as_sf(., coords=c("longitude", "latitude"), crs=4326) 
+
+```
+
+```{r}
+# loadin VIC POA shapefiles
+# abs_aus_poa.shp <- st_read(here("Data", "POA_2021_AUST_GDA2020_SHP/POA_2021_AUST_GDA2020.shp"))
+# saveRDS(abs_aus_poa.shp, "aus_poa_shapefiles.rds")
+
+
+load(file.path(str_extract(getwd(), "^.+Epidemiology"), "Population Health Data/NEPHU Maps", "NEPHU_basemaps_sf.RData"))
+
+
+# wd <- getwd()
+# map_dir <- paste0(str_remove(wd, "/MU Analysis"), "/NEPHU Spatial Mapping")
+# load(file.path(map_dir, "NEPHU_basemaps_Robjects.RData"))
+
+
+aus_poa_shp <- readRDS(here("Data", "aus_poa_shapefiles.rds"))
+
+# create polygon for inner melbourne endemic area
+mu_innermelb.sf <- aus_poa_shp %>% 
+  filter(as.numeric(POA_CODE21) %in% c(3039, 3040, 3041, 3044, 3055)) %>% 
+  st_transform(crs=4326)
+
+nephu_boundary_4326.sf <- st_transform(nephu_boundary.sf, crs=4326)
+
+```
+
+
+
+
+Map below shows both the residential and primary risk exposure locations of NEPHU *M. ulcerans* cases notified during the data period specified above.  
+This is an interactive map allowing you to zoom in and out and look at further details when hovering above the markers.  
+
+Case residential sites denoted by blue dots.  
+Case exposure sites denoted by lightblue markers with red cross.  
+Inner Melbourne endemic area (Brunswick West, Pascoe Vale South, Essendon, Moonee Ponds and Strathmore) denoted by area marked in opaque-red.  
+Area marked in thick black line represents the boundary of the NEPHU catchment.
+
+
+```{r}
+#| title: "Interactive map of M. ulcerans cases residential and exposure sites"
+
+library(leaflet)
+
+# format setup for mouse hover label
+label_resid <- sprintf(
+  "ID: %s<br/>Date: %s<br/>Risk: %s<br/>Exposure LGA: %s", 
+  mu_resid.sf$event_id, mu_resid.sf$event_date, mu_resid.sf$risk_factor, mu_resid.sf$lga_2
+  ) %>% lapply(htmltools::HTML)
+  
+label_exp <- sprintf(
+  "ID: %s<br/>Date: %s<br/>Risk: %s<br/>Exposure LGA: %s", 
+  mu_exp.sf$event_id, mu_exp.sf$event_date, mu_exp.sf$risk_factor, mu_exp.sf$lga_2
+  ) %>% lapply(htmltools::HTML)
+
+label_innermelb <- c("Inner Melbourne MU endemic area") %>% lapply(htmltools::HTML)
+
+# combination leaflet
+icons <- awesomeIcons(
+  icon = 'close', 
+  iconColor = 'red', 
+  library = 'ion', 
+  markerColor="lightblue"
+)
+
+
+leaflet() %>% 
+  addTiles() %>% 
+  addCircles(data=mu_resid.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Residential", label=label_resid) %>% 
+  addAwesomeMarkers(data=mu_exp.sf, icon=icons, group="Exposure", label=label_exp) %>% 
+  addPolygons(data=mu_innermelb.sf, color="red", label=label_innermelb) %>% 
+  addPolygons(data=nephu_boundary_4326.sf, color="black", fill=FALSE) %>% 
+  addLayersControl(overlayGroups=c("Residential", "Exposure"), 
+                   options=layersControlOptions(collapsed=FALSE)) %>% 
+  setView(lng = 145.45, lat = -37.77, zoom=9)
+  
+  # # setView(lat=-38, lng=145, zoom=10) %>% 
+  # addPolygons(color="#444444", weight=1, opacity=1.0, fillOpacity=0.8, smoothFactor=0.5, 
+  #             fillColor= ~colorNumeric(rev(colorRamps::blue2red(6)), domain=pct)(pct), 
+  #             highlightOptions = highlightOptions(color="white", weight=2, bringToFront = TRUE), 
+  #             label = labels) %>% # alt: ~variable or ~function(vars)
+  # addLegend(pal = colorNumeric(rev(colorRamps::blue2red(6)), nephu_bcs2periods_poa.sf$pct), 
+  #           values = ~nephu_bcs2periods_poa.sf$pct, title="%", opacity=1, position="bottomright")
+
+
+```
+
+
+
