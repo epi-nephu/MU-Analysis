@@ -1,10 +1,10 @@
 ---
 title: "MU Analysis NEPHU Catchment"
-author: "Prepared by: Des Gul"
+author: ""
 date: "`r format(Sys.Date(), '%d %b %Y')`"
 format:
   dashboard:
-    logo: "NEPHU LOGO.png"
+    logo: "NEPHU_LOGO.png"
 ---
 
 ```{r}
@@ -234,6 +234,7 @@ lphu_plot <- ggplot(data = mu_lphu %>% filter(!is.na(lphu))) +
 
 ```
 
+## Row
 ### Column1
 
 ```{r}
@@ -276,7 +277,8 @@ ggplotly(cumsum_plot)
 
 # Demographics and Risk factors {orientation="columns"}
 
-## Column
+## Column {width=40%}
+### Row {height=70%}
 
 ```{r pyramid}
 #| title: "Demographic distribution of cases in NEPHU"
@@ -301,6 +303,7 @@ apyramid::age_pyramid(data=pyramid.dat, age_group="agecat5", split_by="sex",
 
 ```
 
+### Row {height=30%}
 
 ```{r risk factors}
 resid_risk <- mu_nephu %>% 
@@ -345,7 +348,7 @@ flextable(risk_table) %>%
 ```
 
 
-## Column2
+## Column2 {width=60%}
 
 ```{r}
 cat("title=", paste0("Monthly cases by risk factor from ", format(min_date, '%b %Y'), " - ", format(max_date, '%b %Y')))
@@ -387,7 +390,6 @@ flextable(risk_endemic_areas_table) %>%
   autofit()
 
 ```
-<br>
 
 <!--
 The majority of cases in NEPHU acquired *M. ulcerans* whilst visiting an endemic area.  
@@ -395,7 +397,7 @@ Such visits include having a holiday residence in an endemic area or travelling 
 
 Only `r risk_table[4,2]` cases (`r risk_table[4,3]`%), had risk unable to be determined as they have not travelled to any endemic areas. Hence, exposure area is taken as their place of residence (i.e. NEPHU LGA)
 -->
-<br>
+
 
 ## Row2
 
@@ -422,7 +424,6 @@ tabyl(mu_nephu_risk %>% filter(!is.na(risk_factor)), risk_factor, exp_lga) %>%
 
 # Risks unable to be determined
 
-
 ```{r}
 #| title: "Summary of cases with risk unable to be determined"
 
@@ -439,9 +440,7 @@ flextable(risk_utd_table_short) %>%
 ```
 
 
-
 # Map
-
 
 ```{r}
 mu_exp_loc <- mu_nephu %>% 
@@ -483,10 +482,7 @@ nephu_boundary_4326.sf <- st_transform(nephu_boundary.sf, crs=4326)
 ```
 
 
-
-
-Map below shows both the residential and primary risk exposure locations of NEPHU *M. ulcerans* cases notified during the data period specified above.  
-This is an interactive map allowing you to zoom in and out and look at further details when hovering above the markers.  
+Map below shows both the residential and primary risk exposure locations of NEPHU *M. ulcerans* cases notified during the data period: `r format(min_date, '%b %Y')` - `r format(max_date, '%b %Y')`. This is an interactive map allowing you to zoom in and out and look at further details when hovering above the markers.  
 
 Case residential sites denoted by blue dots.  
 Case exposure sites denoted by lightblue markers with red cross.  
@@ -495,7 +491,7 @@ Area marked in thick black line represents the boundary of the NEPHU catchment.
 
 
 ```{r}
-#| title: "Interactive map of M. ulcerans cases residential and exposure sites"
+# #| title: "Interactive map of M. ulcerans cases residential and exposure sites"
 
 library(leaflet)
 
