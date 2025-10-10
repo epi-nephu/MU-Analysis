@@ -2,7 +2,9 @@
 title: "MU Analysis NEPHU Catchment"
 author: ""
 date: "`r format(Sys.Date(), '%d %b %Y')`"
-format: dashboard
+format:
+  dashboard:
+    embed-resources: true
 logo: NEPHU-LOGO.png
 ---
 
@@ -17,7 +19,7 @@ Version control:
 
 Other changes to be coded:
 - include forecasting (2 months ahead?) or trend as a new tab page
-
+- include the 2 new inner Melbourne areas (Coburg and Ascot Vale) in map
 
 -->
 
