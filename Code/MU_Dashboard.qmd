@@ -479,6 +479,10 @@ mu_innermelb.sf <- aus_poa_shp %>%
   filter(as.numeric(POA_CODE21) %in% c(3039, 3040, 3041, 3044, 3055)) %>% 
   st_transform(crs=4326)
 
+mu_new_innermelb.sf <- aus_poa_shp %>% 
+  filter(as.numeric(POA_CODE21) %in% c(3058, 3032)) %>% 
+  st_transform(crs=4326)
+
 nephu_boundary_4326.sf <- st_transform(nephu_boundary.sf, crs=4326)
 
 ```
@@ -524,6 +528,7 @@ leaflet() %>%
   addCircles(data=mu_resid.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Residential", label=label_resid) %>% 
   addAwesomeMarkers(data=mu_exp.sf, icon=icons, group="Exposure", label=label_exp) %>% 
   addPolygons(data=mu_innermelb.sf, color="red", label=label_innermelb) %>% 
+  addPolygons(data=mu_new_innermelb.sf, color="red", dashArray="5, 3", label=label_innermelb) %>% 
   addPolygons(data=nephu_boundary_4326.sf, color="black", fill=FALSE) %>% 
   addLayersControl(overlayGroups=c("Residential", "Exposure"), 
                    options=layersControlOptions(collapsed=FALSE)) %>% 
@@ -533,7 +538,12 @@ leaflet() %>%
   # addPolygons(color="#444444", weight=1, opacity=1.0, fillOpacity=0.8, smoothFactor=0.5, 
   #             fillColor= ~colorNumeric(rev(colorRamps::blue2red(6)), domain=pct)(pct), 
   #             highlightOptions = highlightOptions(color="white", weight=2, bringToFront = TRUE), 
-  #             label = labels) %>% # alt: ~variable or ~function(vars)
+  #             label = labels, 
+# color = "blue",  # Border color
+#     weight = 2,      # Border thickness
+#     dashArray = "5, 10",  # Define the dash pattern (5px dash, 10px gap)
+#     fillColor = "lightblue",  # Fill color
+#     fillOpacity = 0.5         # Fill opacity) %>% # alt: ~variable or ~function(vars)
   # addLegend(pal = colorNumeric(rev(colorRamps::blue2red(6)), nephu_bcs2periods_poa.sf$pct), 
   #           values = ~nephu_bcs2periods_poa.sf$pct, title="%", opacity=1, position="bottomright")
 
