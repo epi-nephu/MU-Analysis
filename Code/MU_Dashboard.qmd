@@ -2,10 +2,24 @@
 title: "MU Analysis NEPHU Catchment"
 author: ""
 date: "`r format(Sys.Date(), '%d %b %Y')`"
-format:
-  dashboard:
-    logo: "NEPHU_LOGO.png"
+format: dashboard
+logo: NEPHU-LOGO.png
 ---
+
+<!--
+Parameters:
+Change the up to date of data extraction - max_date and code in the SQL code chunk
+
+
+Version control:
+- tidied up for dashboard presentation inclu NEPHU logo
+
+
+Other changes to be coded:
+- include forecasting (2 months ahead?) or trend as a new tab page
+
+
+-->
 
 ```{r}
 library(here)
@@ -18,7 +32,7 @@ library(plotly)
 ```
 
 
-```{r dbcon, include=FALSE, eval=FALSE}
+```{r dbcon, include=FALSE, eval=TRUE}
 con <- DBI::dbConnect(odbc::odbc(), "PHAR proxy")
 
 ```
@@ -29,7 +43,7 @@ knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, fig.height=6, 
 ```
 
 
-```{r extract_data, eval=FALSE}
+```{r extract_data, eval=TRUE}
 mu_raw <- DBI::dbGetQuery(con, 
                              "
                              SELECT * FROM dh_public_health.phess_release.caseevents ce 
@@ -38,17 +52,16 @@ mu_raw <- DBI::dbGetQuery(con,
                              LEFT JOIN dh_public_health.phess_release.events_buruli_ulcer_exposure buex ON ce.EVENT_ID = buex.EVENT_ID
                              -- LEFT JOIN dh_public_health.phess_release.caselabresults lab ON ce.EVENT_ID = lab.EVENT_ID
                              WHERE ce.CONDITION = 'Mycobacterium ulcerans' 
-                             AND EVENT_DATE BETWEEN '2020-01-01' AND '2025-08-31' 
+                             AND EVENT_DATE BETWEEN '2022-01-01' AND '2025-09-30' 
                              ORDER BY EVENT_DATE DESC; 
                              "
                              )
 
 ```
 
-```{r, eval=TRUE}
-#saveRDS(mu_raw, here::here("Data", "MU_raw_nolab.rds"))
+```{r, eval=FALSE}
+saveRDS(mu_raw, here::here("Data", "MU_raw_nolab.rds"))
 
-#mu_raw <- readRDS(here::here("Data", "MU_raw.rds"))
 mu_raw <- readRDS(here::here("Data", "MU_raw_nolab.rds"))
 
 ```
@@ -57,7 +70,7 @@ mu_raw <- readRDS(here::here("Data", "MU_raw_nolab.rds"))
 ```{r set params}
 start_date <- ymd("2022-01-01")
 min_date <- start_date
-max_date <- ymd("2025-08-31")
+max_date <- ymd("2025-09-30")
 min_date_1yr <- max_date - years(1) + days(1)
 
 ```
@@ -71,14 +84,6 @@ nephu_lgas_short <- c("Banyule", "Boroondara", "Darebin", "Hume", "Knox", "Manni
 
 agecat5_levels <- c("0-4", "5-9", "10-14", "15-19", "20-24", "25-29", "30-34", "35-39", "40-44", "45-49", "50-54", "55-59", "60-64", "65-69", "70-74", "75-79", "80-84", "85+")
 
-# mu_exp <- mu_data_config %>% 
-#   select(event_id, risk_factor, primary_exposure, name, risk_factors_exposure_site, endemic_areas_12months, endemic_areas_type_of_contact, method_of_risk_data_collection)
-# 
-# mu_gilmour <- mu_raw %>% 
-#   clean_names() %>% 
-#   filter(event_id=="320255983783")
-# 
-# names(mu_data_config)
 
 # reconfigure data to include age grps, factors and epi-dates variables
 mu_data_config <- mu_raw %>% 
@@ -129,10 +134,6 @@ mu_data_config <- mu_raw %>%
          mth_yr = paste(epimonth, epiyear)) %>% 
   filter(defn %in% c("Confirmed", "Probable"))
 
-#writexl::write_xlsx(mu_data_config, "mu_data_config.xlsx")
-
-#mu_741 <- filter(mu_data_config, event_id=="320255926741")
-
 ```
 
 ```{r}
@@ -155,7 +156,6 @@ mu_lphu <- mu_vic %>%
 
 ``` {r}
 mu_nephu_vic_counts_mth <- mu_vic %>% 
-  #filter(defn %in% c("Confirmed", "Probable")) %>% 
   group_by(epi_MY) %>% 
   summarise(total = n()) %>% 
   left_join(mu_nephu %>% group_by(epi_MY) %>% summarise(total_nephu = n()), by="epi_MY") %>% 
@@ -165,7 +165,6 @@ mu_nephu_vic_counts_mth <- mu_vic %>%
 
 mu_nephu_vic_counts_yr <- tabyl(mu_vic, epiyear) %>% 
   left_join(tabyl(mu_nephu, epiyear), by="epiyear") %>% 
-  #add_column(., tabyl(mu_nephu %>% filter(defn %in% c("Confirmed", "Probable")), epiyear)) %>% 
   adorn_totals("row") %>% 
   rename(VIC = n.x, 
          NEPHU = n.y) %>% 
@@ -176,8 +175,6 @@ mu_nephu_vic_counts_yr <- tabyl(mu_vic, epiyear) %>%
   autofit() %>% 
   #add_footer_lines("2024 is part year from Jan to Mar") %>% 
   add_footer_lines("Cases include Confirmed and Probable cases")
-
-#mu_nephu_vic_counts_yr
 
 ```
 
@@ -207,7 +204,9 @@ epimonth_breaks_lphu <- c(seq.Date(from=min(mu_lphu$epi_MY), to=max(mu_lphu$epi_
 sec_sf <- max(mu_nephu_vic_counts_mth$total_nephu) / max(mu_nephu_vic_counts_mth$pct_nephu)
 
 # plot of nephu cases over time with pct of VIC cases on sec axis
-nephu_plot <- ggplot(data = mu_nephu_vic_counts_mth) +
+nephu_plot <- ggplot(data = mu_nephu_vic_counts_mth) + 
+  # geom_histogram(data=mu_nephu, aes(x = epi_MY), fill="#F8766D", 
+  #                breaks=epimonth_breaks_nephu, closed="left", col="gray", boundary=-days(14)) + 
   geom_col(aes(x = epi_MY, y=total_nephu, group = 1, fill = "MU cases"), col="gray") + 
   geom_line(aes(x= epi_MY, y=pct_nephu * sec_sf, group=1, col="percentage")) + 
   scale_fill_manual(values="#F8766D", name="") + 
@@ -242,7 +241,6 @@ lphu_plot <- ggplot(data = mu_lphu %>% filter(!is.na(lphu))) +
 
 # cat("title=", paste0("Monthly cases in NEPHU catchment from ", format(min_date, '%b %Y'), " - ", format(max_date, '%b %Y'), " and percentage of VIC cases"))
 
-
 nephu_plot
 
 ```
@@ -265,11 +263,13 @@ cumsum_plot <- ggplot(cumsum_data) +
   geom_line(aes(x=mth, y=cum_count, group=factor(yr), col=factor(yr)), linewidth=1) + 
   cowplot::theme_cowplot() + 
   theme(plot.title = element_text(size=12)) + 
-  labs(title="Cumulative case numbers by month in NEPHU", 
-         #caption=paste0("Data period: ", start_date, " to ", max_date), 
-         x="", 
-         y="Cumulative case numbers", 
-         col="Year")
+  labs(
+    #title="Cumulative case numbers by month in NEPHU", 
+    #caption=paste0("Data period: ", start_date, " to ", max_date), 
+    x="", 
+    y="Cumulative case numbers", 
+    col="Year"
+    )
 
 ggplotly(cumsum_plot)
 
@@ -290,16 +290,16 @@ pyramid.dat <- mu_nephu %>%
   mutate(sex = fct_rev(fct_drop(sex)), 
          defn = fct_drop(defn))
 
-# plot
-# apyramid::age_pyramid(data=pyramid.dat, age_group="agecat5", split_by="sex", 
-#                       stack_by="defn", show_midpoint=FALSE) + 
-#   cowplot::theme_cowplot() + 
-#   labs(y="cases", x="age group (years)", title="", fill="Case \nClassification") 
+
 
 apyramid::age_pyramid(data=pyramid.dat, age_group="agecat5", split_by="sex", 
                       show_midpoint=FALSE) + 
   cowplot::theme_cowplot() + 
-  labs(y="cases", x="age group (years)", title="", fill="Sex", caption="Data from Jan 2020 - Aug 2025") 
+  labs(y="cases", 
+       x="age group (years)", 
+       title="", 
+       fill="Sex", 
+       caption=paste0("Data from ", format(min_date, "%b %Y"), " - ", format(max_date, "%b %Y"))) 
 
 ```
 
