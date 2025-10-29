@@ -6,6 +6,7 @@ format:
   dashboard:
     embed-resources: true
 logo: NEPHU-LOGO.png
+
 ---
 
 <!--
@@ -15,6 +16,7 @@ Change the up to date of data extraction - max_date and code in the SQL code chu
 
 Version control:
 - tidied up for dashboard presentation inclu NEPHU logo
+- add clustering algorithm
 
 
 Other changes to be coded:
@@ -35,7 +37,7 @@ library(plotly)
 
 
 ```{r dbcon, include=FALSE, eval=TRUE}
-con <- DBI::dbConnect(odbc::odbc(), "PHAR proxy")
+con <- DBI::dbConnect(odbc::odbc(), "PHAR")
 
 ```
 
@@ -44,36 +46,38 @@ knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, fig.height=6, 
 
 ```
 
+```{r set params}
+start_date <- ymd("2022-01-01")
+min_date <- start_date
+max_date <- ymd("2025-10-28")
+min_date_1yr <- max_date - years(1) + days(1)
+cluster_cutoff_months <- 12
+cluster_min_pts <- 3
+
+```
 
 ```{r extract_data, eval=TRUE}
 mu_raw <- DBI::dbGetQuery(con, 
-                             "
+                             str_glue("
                              SELECT * FROM dh_public_health.phess_release.caseevents ce 
                              LEFT JOIN dh_public_health.phess_release.caseexposures exp ON ce.EVENT_ID = exp.EVENT_ID 
                              LEFT JOIN dh_public_health.phess_release.events_buruli_ulcer bu ON ce.EVENT_ID = bu.EVENT_ID
                              LEFT JOIN dh_public_health.phess_release.events_buruli_ulcer_exposure buex ON ce.EVENT_ID = buex.EVENT_ID
                              -- LEFT JOIN dh_public_health.phess_release.caselabresults lab ON ce.EVENT_ID = lab.EVENT_ID
                              WHERE ce.CONDITION = 'Mycobacterium ulcerans' 
-                             AND EVENT_DATE BETWEEN '2022-01-01' AND '2025-09-30' 
+                             AND EVENT_DATE BETWEEN '{start_date}' AND '{max_date}' 
                              ORDER BY EVENT_DATE DESC; 
                              "
                              )
+)
 
 ```
+
 
 ```{r, eval=FALSE}
 saveRDS(mu_raw, here::here("Data", "MU_raw_nolab.rds"))
 
 mu_raw <- readRDS(here::here("Data", "MU_raw_nolab.rds"))
-
-```
-
-
-```{r set params}
-start_date <- ymd("2022-01-01")
-min_date <- start_date
-max_date <- ymd("2025-09-30")
-min_date_1yr <- max_date - years(1) + days(1)
 
 ```
 
@@ -134,7 +138,8 @@ mu_data_config <- mu_raw %>%
          epimonth = month(event_date, label=TRUE), 
          epi_WY = ceiling_date(event_date, "week") -1, 
          mth_yr = paste(epimonth, epiyear)) %>% 
-  filter(defn %in% c("Confirmed", "Probable"))
+  filter(defn %in% c("Confirmed", "Probable")) %>% 
+  mutate(across(ends_with("tude"), ~ as.numeric(.x)))
 
 ```
 
@@ -393,16 +398,8 @@ flextable(risk_endemic_areas_table) %>%
 
 ```
 
-<!--
-The majority of cases in NEPHU acquired *M. ulcerans* whilst visiting an endemic area.  
-Such visits include having a holiday residence in an endemic area or travelling to an endemic area for holiday, recreational activity, visiting friends and family, among others.  Some cases may also have previously lived in an endemic area during their acquisition period, before to the NEPHU catchment.  
-
-Only `r risk_table[4,2]` cases (`r risk_table[4,3]`%), had risk unable to be determined as they have not travelled to any endemic areas. Hence, exposure area is taken as their place of residence (i.e. NEPHU LGA)
--->
-
 
 ## Row2
-
 
 ```{r}
 #| title: "Exposure areas for all NEPHU cases"
@@ -412,16 +409,18 @@ tabyl(mu_nephu_risk %>% filter(!is.na(risk_factor)), risk_factor, exp_lga) %>%
   set_header_labels(risk_factor = "", NA_ = "") %>% 
   add_header_row(values=c("Risk Factor", "Endemic LGAs", "", "", "", "", "", "", "", "", 
                           "Non-Endemic LGAs", "", "", "", "", 
-                          "Unknown"), top=TRUE) %>% 
+                          "Interstate /\nUnknown"), top=TRUE) %>% 
   merge_at(i=1, j=2:10, part="header") %>% 
   merge_at(i=1, j=11:15, part="header") %>% 
-  merge_v(j=1, part="header") %>% 
+  merge_v(j=1, part="header", combine=TRUE) %>% 
+  merge_v(j=16, part="header", combine=TRUE) %>% 
   align(align="center", part="header") %>% 
   color(i=1, j=2, part="header", color="red") %>% 
   color(i=2, j=2:10, part="header", color="red") %>% 
   autofit() %>% 
   add_footer_lines("Travel within Australia denote travel to endemic areas for holiday, recreation, visiting friends, etc") %>% 
   add_footer_lines("Residence denote residence of case during acquisition period")
+
 ```
 
 # Risks unable to be determined
@@ -439,38 +438,16 @@ risk_utd_table_short <- risk_utd_table %>%
 flextable(risk_utd_table_short) %>% 
   set_header_labels(event_id = "PHESS ID", event_date = "Event date", date_of_onset = "Symptom onset date", age="Age", sex="Sex", postcode="Residential postcode", lga="LGA") %>% 
   autofit()
+
 ```
 
 
 # Map
 
 ```{r}
-mu_exp_loc <- mu_nephu %>% 
-  select(event_id, event_date, postcode, lga, latitude, longitude, risk_factor, primary_exposure, risk_factors_exposure_site, city_2, postcode_2, lga_2, 
-         risk_factors_exposure_site_latitude, risk_factors_exposure_site_longitude) 
-
-mu_exp.sf <- mu_exp_loc %>% 
-  filter(!is.na(risk_factors_exposure_site_latitude)) %>% 
-  st_as_sf(., coords=c("risk_factors_exposure_site_longitude", "risk_factors_exposure_site_latitude"), crs=st_crs(4326))
-
-mu_resid.sf <- mu_exp_loc %>% 
-  st_as_sf(., coords=c("longitude", "latitude"), crs=4326) 
-
-```
-
-```{r}
-# loadin VIC POA shapefiles
-# abs_aus_poa.shp <- st_read(here("Data", "POA_2021_AUST_GDA2020_SHP/POA_2021_AUST_GDA2020.shp"))
-# saveRDS(abs_aus_poa.shp, "aus_poa_shapefiles.rds")
-
+# load in VIC POA shapefiles
 
 load(file.path(str_extract(getwd(), "^.+Epidemiology"), "Population Health Data/NEPHU Maps", "NEPHU_basemaps_sf.RData"))
-
-
-# wd <- getwd()
-# map_dir <- paste0(str_remove(wd, "/MU Analysis"), "/NEPHU Spatial Mapping")
-# load(file.path(map_dir, "NEPHU_basemaps_Robjects.RData"))
-
 
 aus_poa_shp <- readRDS(here("Data", "aus_poa_shapefiles.rds"))
 
@@ -487,19 +464,79 @@ nephu_boundary_4326.sf <- st_transform(nephu_boundary.sf, crs=4326)
 
 ```
 
+```{r}
+# Create residential and exp locations sf objects
 
-Map below shows both the residential and primary risk exposure locations of NEPHU *M. ulcerans* cases notified during the data period: `r format(min_date, '%b %Y')` - `r format(max_date, '%b %Y')`. This is an interactive map allowing you to zoom in and out and look at further details when hovering above the markers.  
+mu_exp_loc <- mu_nephu %>% 
+  select(event_id, event_date, postcode, lga, latitude, longitude, risk_factor, primary_exposure, risk_factors_exposure_site, city_2, postcode_2, lga_2, 
+         risk_factors_exposure_site_latitude, risk_factors_exposure_site_longitude) 
+
+mu_exp.sf <- mu_exp_loc %>% 
+  filter(!is.na(risk_factors_exposure_site_latitude)) %>% 
+  st_as_sf(., coords=c("risk_factors_exposure_site_longitude", "risk_factors_exposure_site_latitude"), crs=st_crs(4326))
+
+mu_resid.sf <- mu_exp_loc %>% 
+  st_as_sf(., coords=c("longitude", "latitude"), crs=4326) 
+
+#datapt_31631 <- filter(mu_data_config, event_id=="320256131631")
+```
+
+
+```{r}
+# Find cluster - at least 5 points within 2km radius for data in the last x months
+library(geosphere)
+library(dbscan)
+library(leaflet)
+
+cluster_cutoff_date <- max_date - months(cluster_cutoff_months)
+
+cluster_data <- mu_data_config %>% 
+  filter(lga %in% nephu_lgas) %>% 
+  remove_empty("cols") %>% 
+  distinct(event_id, .keep_all=TRUE) %>% 
+  filter(event_date >= cluster_cutoff_date)
+  
+
+cluster_coords_mat <- as.matrix(cluster_data[, c("longitude", "latitude")])
+
+dist_matrix <- distm(cluster_coords_mat, fun=distHaversine)
+
+# run DBSCAN clustering - eps=radius in metres, minPts = min pts to form a cluster
+radius_metres <- 2000
+cluster_detect <- dbscan::dbscan(as.dist(dist_matrix), eps=radius_metres, minPts=cluster_min_pts)
+
+# Add cluster IDs to cluster_data
+cluster_data$cluster <- cluster_detect$cluster
+
+
+# convert to sf object
+cluster_data.sf <- st_as_sf(cluster_data, coords=c("longitude", "latitude"))
+cluster_group.sf <- filter(cluster_data.sf, cluster>0)
+
+label_cluster_resid <- sprintf(
+  "ID: %s<br/>Date: %s<br/>Risk: %s<br/>Exposure LGA: %s<br/>Cluster Number: %s", 
+  cluster_group.sf$event_id, cluster_group.sf$event_date, cluster_group.sf$risk_factor, cluster_group.sf$lga_2, cluster_group.sf$cluster
+  ) %>% lapply(htmltools::HTML)
+
+cluster_pal <- colorFactor(
+  palette = c("red", "orange"), 
+  domain = cluster_group.sf$cluster
+)
+
+```
+
+
+Map below shows both the residential and primary risk exposure locations of NEPHU *M. ulcerans* cases notified during the whole data period: `r format(min_date, '%b %Y')` - `r format(max_date, '%b %Y')`. This is an interactive map allowing you to zoom in and out and look at further details when hovering above the markers.  
 
 Case residential sites denoted by blue dots.  
 Case exposure sites denoted by lightblue markers with red cross.  
 Inner Melbourne endemic area (Brunswick West, Pascoe Vale South, Essendon, Moonee Ponds and Strathmore) denoted by area marked in opaque-red.  
 Area marked in thick black line represents the boundary of the NEPHU catchment.
 
+A clustering algorithm is also applied - case residential locations taken from the data of most recent `r cluster_cutoff_months` months which are clustered together within a 2km radius with a min of `r cluster_min_pts` locations. These are denoted in red dots and can be used to further examine if there is a risk of the area becoming an MU endemic area.
 
 ```{r}
 # #| title: "Interactive map of M. ulcerans cases residential and exposure sites"
-
-library(leaflet)
 
 # format setup for mouse hover label
 label_resid <- sprintf(
@@ -527,10 +564,12 @@ leaflet() %>%
   addTiles() %>% 
   addCircles(data=mu_resid.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Residential", label=label_resid) %>% 
   addAwesomeMarkers(data=mu_exp.sf, icon=icons, group="Exposure", label=label_exp) %>% 
+  addCircles(data=cluster_group.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Cluster", color="red", 
+             label=label_cluster_resid) %>% 
   addPolygons(data=mu_innermelb.sf, color="red", label=label_innermelb) %>% 
   addPolygons(data=mu_new_innermelb.sf, color="red", dashArray="5, 3", label=label_innermelb) %>% 
   addPolygons(data=nephu_boundary_4326.sf, color="black", fill=FALSE) %>% 
-  addLayersControl(overlayGroups=c("Residential", "Exposure"), 
+  addLayersControl(overlayGroups=c("Residential", "Exposure", "Cluster"), 
                    options=layersControlOptions(collapsed=FALSE)) %>% 
   setView(lng = 145.45, lat = -37.77, zoom=9)
   
@@ -549,6 +588,5 @@ leaflet() %>%
 
 
 ```
-
 
 
