@@ -127,16 +127,18 @@ Note in dataset, Moreland LGA (previous name) = Merri-bek LGA
 inclu_lga <- c("Moonee Valley (C)", "Moreland (C)", "Greater Geelong (C)", "Darebin (C)", "Yarra (C)", "Banyule (C)", "Boroondara (C)")
 
 #inclu_west_barwon <- c("Moonee Valley (C)", "Moreland (C)", "Greater Geelong (C)", "Surf Coast (C)")
-
+mu_clean <- mu_data_config
 mu_in_north <- mu_clean %>% 
   filter(lga %in% inclu_lga)
 
 # mu_west_barwon <- mu_clean %>% 
 #   filter(lga %in% inclu_west_barwon)
 
+
+
 # Construct a master df with all months from start date to end date
-start_date <- ymd("2020-01-01")
-end_date <- ymd("2025-08-31")
+start_date <- ymd("2022-01-01")
+end_date <- ymd("2025-10-31")
 
 monthly_sequence <- seq(start_date, end_date, by = "month")
 
@@ -145,14 +147,15 @@ monthly_seq_df <- data.frame(epi_MY = monthly_sequence) %>% # code multiplies ro
 
 monthly_seq_df <- do.call(rbind, replicate(7, data.frame(epi_MY = monthly_sequence), simplify = FALSE)) %>% 
   # code multiplies block by block n times
-  mutate(lga = rep(inclu_lga, each=68))
+  mutate(lga = rep(inclu_lga, each=46)) # each = number of months in required period ie: 12mths x 3 yrs + 10mths
   
 
 # Calculate monthly counts
 counts_mth_lga <- left_join(monthly_seq_df, 
-                            mu_in_north %>% group_by(lga, epi_MY) %>% summarise(total = n()), 
+                            mu_in_north %>% dplyr::distinct(event_id, .keep_all=TRUE) %>% group_by(lga, epi_MY) %>% summarise(total = n()), 
                             by=c("lga", "epi_MY")) %>% 
   replace_na(replace=list(total=0)) 
+
 
 
 # Plot graph of cases over time
