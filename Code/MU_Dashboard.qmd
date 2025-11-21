@@ -37,7 +37,7 @@ library(plotly)
 
 
 ```{r dbcon, include=FALSE, eval=TRUE}
-con <- DBI::dbConnect(odbc::odbc(), "PHAR")
+con <- DBI::dbConnect(odbc::odbc(), "PHAR proxy")
 
 ```
 
@@ -49,7 +49,7 @@ knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, fig.height=6, 
 ```{r set params}
 start_date <- ymd("2022-01-01")
 min_date <- start_date
-max_date <- ymd("2025-10-28")
+max_date <- ymd("2025-11-15")
 min_date_1yr <- max_date - years(1) + days(1)
 cluster_cutoff_months <- 12
 cluster_min_pts <- 3
@@ -385,7 +385,7 @@ ggplotly(rf_plot)
 # Exposure Locations
 
 ``` {r}
-#| title: "Exposure locations (LGAs) in endemic areas for NEPHU cases"
+#| title: "Exposure by endemic areas for NEPHU cases"
 
 risk_endemic_areas_table <- tabyl(mu_nephu_risk, endemic_areas_12months) %>% 
   mutate(percent = round(100*percent, 0)) %>% 
@@ -402,7 +402,7 @@ flextable(risk_endemic_areas_table) %>%
 ## Row2
 
 ```{r}
-#| title: "Exposure areas for all NEPHU cases"
+#| title: "Exposure by LGAs for NEPHU cases"
 
 tabyl(mu_nephu_risk %>% filter(!is.na(risk_factor)), risk_factor, exp_lga) %>% 
   flextable() %>% 
@@ -450,17 +450,36 @@ flextable(risk_utd_table_short) %>%
 load(file.path(str_extract(getwd(), "^.+Epidemiology"), "Population Health Data/NEPHU Maps", "NEPHU_basemaps_sf.RData"))
 
 aus_poa_shp <- readRDS(here("Data", "aus_poa_shapefiles.rds"))
+vic_sal_shp <- readRDS(here("Data", "vic_sal_shapefiles_sf.rds"))
 
-# create polygon for inner melbourne endemic area
-mu_innermelb.sf <- aus_poa_shp %>% 
-  filter(as.numeric(POA_CODE21) %in% c(3039, 3040, 3041, 3044, 3055)) %>% 
+# create polygon for inner melbourne endemic area - using POA
+mu_innermelb_poa.sf <- aus_poa_shp %>% 
+  # filter(as.numeric(POA_CODE21) %in% c(3039, 3040, 3041, 3044, 3055)) %>% 
+  filter(POA_CODE21 %in% c("3039", "3040", "3041", "3044", "3055")) %>% 
   st_transform(crs=4326)
 
-mu_new_innermelb.sf <- aus_poa_shp %>% 
-  filter(as.numeric(POA_CODE21) %in% c(3058, 3032)) %>% 
+mu_new_innermelb_poa.sf <- aus_poa_shp %>% 
+  filter(POA_CODE21 %in% c("3058", "3032")) %>% 
+  st_transform(crs=4326)
+
+# create polygon for inner melbourne endemic area - using SAL
+mu_innermelb_sal.sf <- vic_sal_shp %>% 
+  filter(sal_name %in% c("Ascot Vale", "Brunswick (Vic.)", "Brunswick West", "Coburg", "Pascoe Vale South", "Essendon", "Moonee Ponds", "Strathmore (Vic.)")) %>% 
   st_transform(crs=4326)
 
 nephu_boundary_4326.sf <- st_transform(nephu_boundary.sf, crs=4326)
+
+label_innermelb <- c("Inner Melbourne MU endemic area") %>% lapply(htmltools::HTML)
+leaflet() %>% 
+  addTiles() %>% 
+  #addCircles(data=mu_resid.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Residential", label=label_resid) %>% 
+  #addAwesomeMarkers(data=mu_exp.sf, icon=icons, group="Exposure", label=label_exp) %>% 
+  #addCircles(data=cluster_group.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Cluster", color="red", 
+  #           label=label_cluster_resid) %>% 
+  addPolygons(data=mu_innermelb_sal.sf, color="red", label=label_innermelb) %>% 
+  addPolygons(data=mu_innermelb_poa.sf, color="blue", label=label_innermelb) %>% 
+  addPolygons(data=mu_new_innermelb_poa.sf, color="blue", dashArray="5, 10", label=label_innermelb) %>% 
+  addPolygons(data=nephu_boundary_4326.sf, color="black", fill=FALSE)
 
 ```
 
@@ -589,4 +608,80 @@ leaflet() %>%
 
 ```
 
+# Comparison with endemic-areas
 
+```{r}
+inclu_lga <- c("Moonee Valley (C)", "Moreland (C)", "Greater Geelong (C)", "Darebin (C)", "Yarra (C)", "Banyule (C)", "Boroondara (C)")
+
+#inclu_west_barwon <- c("Moonee Valley (C)", "Moreland (C)", "Greater Geelong (C)", "Surf Coast (C)")
+
+mu_in_north <- mu_data_config %>% 
+  filter(lga %in% inclu_lga)
+
+# mu_west_barwon <- mu_clean %>% 
+#   filter(lga %in% inclu_west_barwon)
+
+
+
+# Construct a master df with all months from start date to end date
+start_date <- ymd("2022-01-01")
+end_date <- ymd("2025-10-31")
+
+monthly_sequence <- seq(start_date, end_date, by = "month")
+
+monthly_seq_df <- data.frame(epi_MY = monthly_sequence) %>% # code multiplies row by row n times
+  slice(rep(1:n(), each = 7))
+
+monthly_seq_df <- do.call(rbind, replicate(7, data.frame(epi_MY = monthly_sequence), simplify = FALSE)) %>% 
+  # code multiplies block by block n times
+  mutate(lga = rep(inclu_lga, each=46)) # each = number of months in required period ie: 12mths x 3 yrs + 10mths
+  
+
+# Calculate monthly counts
+counts_mth_lga <- left_join(monthly_seq_df, 
+                            mu_in_north %>% dplyr::distinct(event_id, .keep_all=TRUE) %>% group_by(lga, epi_MY) %>% summarise(total = n()), 
+                            by=c("lga", "epi_MY")) %>% 
+  replace_na(replace=list(total=0)) 
+
+
+
+# Plot graph of cases over time
+mth_cases_graph <- ggplot(data = counts_mth_lga) +
+  #geom_col(aes(x = epi_MY, y=total_nephu, group = 1, fill = "MU cases"), col="gray") + 
+  geom_line(aes(x= epi_MY, y=total, group=1, col=lga), linewidth=1) + 
+  #scale_fill_manual(values="#F8766D", name="") + 
+  #scale_colour_manual(values=c("#619CFF"), name="") + 
+  scale_x_date(expand=c(0,0), date_breaks="3 months", date_minor_breaks="month", date_labels="%b %Y", name="") +
+  scale_y_continuous(expand=c(0,0), name="Monthly notified cases", breaks=integer_breaks()) + 
+  cowplot::theme_cowplot() + 
+  theme(plot.caption = element_text(size=11), 
+        axis.text.x = element_text(angle = 45, hjust=1))
+
+
+
+# Plot cumulative graph
+cumsum_data <- counts_mth_lga %>% 
+  mutate(yr = year(epi_MY), 
+         mth = month(epi_MY, label=TRUE, abbr=TRUE)) %>% 
+  group_by(lga, yr) %>% 
+  mutate(cum_count = cumsum(total), 
+         lga = fct(lga, levels =c("Greater Geelong (C)", "Moreland (C)", "Moonee Valley (C)", "Boroondara (C)", "Banyule (C)", "Darebin (C)", "Yarra (C)")))
+
+cumsum_plot <- ggplot(cumsum_data) + 
+  geom_line(aes(x=epi_MY, y=cum_count, group=lga, col=lga), linewidth=1) + 
+  scale_color_manual(values=c("orange", "red", "pink", "yellow", "green", "blue", "skyblue")) + 
+  scale_x_date(expand=c(0,0), date_breaks="3 months", date_minor_breaks="month", date_labels="%b %Y", name="") +
+  scale_y_continuous(expand=c(0,0), breaks=integer_breaks()) + 
+  cowplot::theme_cowplot() + 
+  theme(plot.title = element_text(size=12), 
+        plot.caption = element_text(size=11), 
+        axis.text.x = element_text(angle = 45, hjust=1)) + 
+  labs(title="Cumulative case numbers by month", 
+         #caption=paste0("Data period: ", start_date, " to ", max_date), 
+         x="", 
+         y="Cumulative case numbers", 
+         col="LGA")
+
+cumsum_plot
+
+```
