@@ -49,7 +49,7 @@ knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, fig.height=6, 
 ```{r set params}
 start_date <- ymd("2022-01-01")
 min_date <- start_date
-max_date <- ymd("2025-11-15")
+max_date <- ymd("2025-11-24")
 min_date_1yr <- max_date - years(1) + days(1)
 cluster_cutoff_months <- 12
 cluster_min_pts <- 3
@@ -84,9 +84,7 @@ mu_raw <- readRDS(here::here("Data", "MU_raw_nolab.rds"))
 
 ``` {r configure}
 # setup factor variables levels
-nephu_lgas <- c("Banyule (C)", "Boroondara (C)", "Darebin (C)", "Hume (C)", "Knox (C)", "Manningham (C)", "Maroondah (C)", "Nillumbik (S)", "Whitehorse (C)", "Whittlesea (C)", "Yarra (C)", "Yarra Ranges (S)")
-
-nephu_lgas_short <- c("Banyule", "Boroondara", "Darebin", "Hume", "Knox", "Manningham", "Maroondah", "Nillumbik", "Whitehorse", "Whittlesea", "Yarra", "Yarra Ranges")
+nephu_lgas <- c("Banyule", "Boroondara", "Darebin", "Hume", "Knox", "Manningham", "Maroondah", "Nillumbik", "Whitehorse", "Whittlesea", "Yarra", "Yarra Ranges")
 
 agecat5_levels <- c("0-4", "5-9", "10-14", "15-19", "20-24", "25-29", "30-34", "35-39", "40-44", "45-49", "50-54", "55-59", "60-64", "65-69", "70-74", "75-79", "80-84", "85+")
 
@@ -129,6 +127,7 @@ mu_data_config <- mu_raw %>%
                               TRUE ~ "Overseas"), 
          aus_born = factor(aus_born, levels=c("Australia", "Overseas", "Not stated")), 
          defn = factor(defn, levels=c("Confirmed", "Probable", "Suspected", "Rejected", "Not notifiable")), 
+         lga = str_remove(lga, "\\s\\((C|S)\\)"), 
          sex = factor(sex, levels=c("Female", "Male", "Not stated", "Other")), 
          atsi = fct_collapse(factor(atsi, levels=c("Aboriginal and Torres Strait Islander origin", "Aboriginal but not Torres Strait Islander origin", "Not Aboriginal or Torres Strait Islander", "Missing/Not Stated")), `Aboriginal and/or Torres Strait Islander` = c("Aboriginal and Torres Strait Islander origin", "Aboriginal but not Torres Strait Islander origin")), 
          epi_MY = my(paste(month(event_date), year(event_date), sep="-")), 
@@ -161,7 +160,7 @@ mu_lphu <- mu_vic %>%
 
 ```
 
-``` {r}
+``` {r monthly counts}
 mu_nephu_vic_counts_mth <- mu_vic %>% 
   group_by(epi_MY) %>% 
   summarise(total = n()) %>% 
@@ -271,8 +270,6 @@ cumsum_plot <- ggplot(cumsum_data) +
   cowplot::theme_cowplot() + 
   theme(plot.title = element_text(size=12)) + 
   labs(
-    #title="Cumulative case numbers by month in NEPHU", 
-    #caption=paste0("Data period: ", start_date, " to ", max_date), 
     x="", 
     y="Cumulative case numbers", 
     col="Year"
@@ -333,7 +330,7 @@ mu_nephu_risk <- mu_nephu %>%
   mutate(risk_factor = factor(risk_factor, levels=risk_factor_levels), 
          exp_lga = str_remove(lga_2, pattern="[:space:]\\([:upper:]\\)"), 
          exp_lga = case_when(lga_2=="Unknown Victoria" ~ "Mornington Peninsula", # recode as names states Mornington Peninsula
-                             lga_2=="Queenscliffe (B)" ~ "Queenscliff", # correction of lga spelling
+                             lga_2=="Queenscliffe" ~ "Queenscliff", # correction of lga spelling
                              TRUE ~ exp_lga), 
          exp_lga = factor(exp_lga, levels=exp_lga_levels), 
          endemic_areas_12months = factor(endemic_areas_12months, levels=endemic_areas))
@@ -449,37 +446,42 @@ flextable(risk_utd_table_short) %>%
 
 load(file.path(str_extract(getwd(), "^.+Epidemiology"), "Population Health Data/NEPHU Maps", "NEPHU_basemaps_sf.RData"))
 
-aus_poa_shp <- readRDS(here("Data", "aus_poa_shapefiles.rds"))
-vic_sal_shp <- readRDS(here("Data", "vic_sal_shapefiles_sf.rds"))
+#aus_poa_shp <- readRDS(here("Data", "aus_poa_shapefiles.rds"))
+vic_sal_shp <- readRDS(here("Data", "vic_sal_shapefiles_sf.rds")) %>% 
+  mutate(sal_name = str_remove(sal_name, "\\s\\(Vic\\.\\)")) 
 
 # create polygon for inner melbourne endemic area - using POA
-mu_innermelb_poa.sf <- aus_poa_shp %>% 
-  # filter(as.numeric(POA_CODE21) %in% c(3039, 3040, 3041, 3044, 3055)) %>% 
-  filter(POA_CODE21 %in% c("3039", "3040", "3041", "3044", "3055")) %>% 
-  st_transform(crs=4326)
-
-mu_new_innermelb_poa.sf <- aus_poa_shp %>% 
-  filter(POA_CODE21 %in% c("3058", "3032")) %>% 
-  st_transform(crs=4326)
+# mu_innermelb_poa.sf <- aus_poa_shp %>% 
+#   # filter(as.numeric(POA_CODE21) %in% c(3039, 3040, 3041, 3044, 3055)) %>% 
+#   filter(POA_CODE21 %in% c("3039", "3040", "3041", "3044", "3055")) %>% 
+#   st_transform(crs=4326)
+# 
+# mu_new_innermelb_poa.sf <- aus_poa_shp %>% 
+#   filter(POA_CODE21 %in% c("3058", "3032")) %>% 
+#   st_transform(crs=4326)
 
 # create polygon for inner melbourne endemic area - using SAL
-mu_innermelb_sal.sf <- vic_sal_shp %>% 
-  filter(sal_name %in% c("Ascot Vale", "Brunswick (Vic.)", "Brunswick West", "Coburg", "Pascoe Vale South", "Essendon", "Moonee Ponds", "Strathmore (Vic.)")) %>% 
+innermelb_sal.sf <- vic_sal_shp %>% 
+  filter(sal_name %in% c("Brunswick West", "Pascoe Vale South", "Essendon", "Moonee Ponds", "Strathmore")) %>% 
+  st_transform(crs=4326)
+
+innermelb_new_sal.sf <- vic_sal_shp %>% 
+  filter(sal_name %in% c("Ascot Vale", "Brunswick", "Coburg")) %>% 
   st_transform(crs=4326)
 
 nephu_boundary_4326.sf <- st_transform(nephu_boundary.sf, crs=4326)
 
-label_innermelb <- c("Inner Melbourne MU endemic area") %>% lapply(htmltools::HTML)
-leaflet() %>% 
-  addTiles() %>% 
-  #addCircles(data=mu_resid.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Residential", label=label_resid) %>% 
-  #addAwesomeMarkers(data=mu_exp.sf, icon=icons, group="Exposure", label=label_exp) %>% 
-  #addCircles(data=cluster_group.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Cluster", color="red", 
-  #           label=label_cluster_resid) %>% 
-  addPolygons(data=mu_innermelb_sal.sf, color="red", label=label_innermelb) %>% 
-  addPolygons(data=mu_innermelb_poa.sf, color="blue", label=label_innermelb) %>% 
-  addPolygons(data=mu_new_innermelb_poa.sf, color="blue", dashArray="5, 10", label=label_innermelb) %>% 
-  addPolygons(data=nephu_boundary_4326.sf, color="black", fill=FALSE)
+# label_innermelb <- c("Inner Melbourne MU endemic area") %>% lapply(htmltools::HTML)
+# leaflet() %>% 
+#   addTiles() %>% 
+#   #addCircles(data=mu_resid.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Residential", label=label_resid) %>% 
+#   #addAwesomeMarkers(data=mu_exp.sf, icon=icons, group="Exposure", label=label_exp) %>% 
+#   #addCircles(data=cluster_group.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Cluster", color="red", 
+#   #           label=label_cluster_resid) %>% 
+#   addPolygons(data=mu_innermelb_sal.sf, color="red", label=label_innermelb) %>% 
+#   addPolygons(data=mu_innermelb_poa.sf, color="blue", label=label_innermelb) %>% 
+#   addPolygons(data=mu_new_innermelb_poa.sf, color="blue", dashArray="5, 10", label=label_innermelb) %>% 
+#   addPolygons(data=nephu_boundary_4326.sf, color="black", fill=FALSE)
 
 ```
 
@@ -497,12 +499,12 @@ mu_exp.sf <- mu_exp_loc %>%
 mu_resid.sf <- mu_exp_loc %>% 
   st_as_sf(., coords=c("longitude", "latitude"), crs=4326) 
 
-#datapt_31631 <- filter(mu_data_config, event_id=="320256131631")
 ```
 
 
 ```{r}
 # Find cluster - at least 5 points within 2km radius for data in the last x months
+# Based on DH criteria: for an endemic suburb or a suburb at risk (needs to be 5 cases within a 2km radius) 
 library(geosphere)
 library(dbscan)
 library(leaflet)
@@ -585,8 +587,8 @@ leaflet() %>%
   addAwesomeMarkers(data=mu_exp.sf, icon=icons, group="Exposure", label=label_exp) %>% 
   addCircles(data=cluster_group.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Cluster", color="red", 
              label=label_cluster_resid) %>% 
-  addPolygons(data=mu_innermelb.sf, color="red", label=label_innermelb) %>% 
-  addPolygons(data=mu_new_innermelb.sf, color="red", dashArray="5, 3", label=label_innermelb) %>% 
+  addPolygons(data=innermelb_sal.sf, color="red", label=label_innermelb) %>% 
+  addPolygons(data=innermelb_new_sal.sf, color="red", dashArray="5, 10", label=label_innermelb) %>% 
   addPolygons(data=nephu_boundary_4326.sf, color="black", fill=FALSE) %>% 
   addLayersControl(overlayGroups=c("Residential", "Exposure", "Cluster"), 
                    options=layersControlOptions(collapsed=FALSE)) %>% 
@@ -611,7 +613,7 @@ leaflet() %>%
 # Comparison with endemic-areas
 
 ```{r}
-inclu_lga <- c("Moonee Valley (C)", "Moreland (C)", "Greater Geelong (C)", "Darebin (C)", "Yarra (C)", "Banyule (C)", "Boroondara (C)")
+inclu_lga <- c("Moonee Valley", "Moreland", "Greater Geelong", "Darebin", "Yarra", "Banyule", "Boroondara")
 
 #inclu_west_barwon <- c("Moonee Valley (C)", "Moreland (C)", "Greater Geelong (C)", "Surf Coast (C)")
 
@@ -624,17 +626,17 @@ mu_in_north <- mu_data_config %>%
 
 
 # Construct a master df with all months from start date to end date
-start_date <- ymd("2022-01-01")
-end_date <- ymd("2025-10-31")
+# start_date <- ymd("2022-01-01")
+# end_date <- ymd("2025-10-31")
 
-monthly_sequence <- seq(start_date, end_date, by = "month")
+monthly_sequence <- seq(start_date, max_date, by = "month")
 
-monthly_seq_df <- data.frame(epi_MY = monthly_sequence) %>% # code multiplies row by row n times
+monthly_seq_df <- data.frame(epi_MY = monthly_sequence) %>% # code multiplies row by row n times, each  = number of LGAs
   slice(rep(1:n(), each = 7))
 
 monthly_seq_df <- do.call(rbind, replicate(7, data.frame(epi_MY = monthly_sequence), simplify = FALSE)) %>% 
   # code multiplies block by block n times
-  mutate(lga = rep(inclu_lga, each=46)) # each = number of months in required period ie: 12mths x 3 yrs + 10mths
+  mutate(lga = rep(inclu_lga, each=47)) # each = number of months in required period ie: 12mths x 3 yrs + 10mths
   
 
 # Calculate monthly counts
@@ -665,7 +667,7 @@ cumsum_data <- counts_mth_lga %>%
          mth = month(epi_MY, label=TRUE, abbr=TRUE)) %>% 
   group_by(lga, yr) %>% 
   mutate(cum_count = cumsum(total), 
-         lga = fct(lga, levels =c("Greater Geelong (C)", "Moreland (C)", "Moonee Valley (C)", "Boroondara (C)", "Banyule (C)", "Darebin (C)", "Yarra (C)")))
+         lga = fct(lga, levels =c("Greater Geelong", "Moreland", "Moonee Valley", "Boroondara", "Banyule", "Darebin", "Yarra")))
 
 cumsum_plot <- ggplot(cumsum_data) + 
   geom_line(aes(x=epi_MY, y=cum_count, group=lga, col=lga), linewidth=1) + 
@@ -685,3 +687,64 @@ cumsum_plot <- ggplot(cumsum_data) +
 cumsum_plot
 
 ```
+
+```{r}
+root_folder <- str_extract(getwd(), "^.+Epidemiology")
+
+# import LGA code list
+lga_codelist <- readxl::read_xlsx(path=paste0(root_folder, "/Epi projects/NEPHU Spatial Mapping/Output/LGA_codelist.xlsx"))
+
+# import in LGA population data
+census_folder <- "/Population Health Data/ABS Census Population Housing 2021 (GCP)/Data/LGA/VIC"
+lga_pop <- read.csv(file=paste0(root_folder, census_folder, "/2021Census_G01_VIC_LGA.csv")) %>% clean_names()
+
+
+pop_lga <- lga_codelist %>% 
+  filter(lga_name %in% inclu_lga) %>% 
+  mutate(lga_code_2021 = paste0("LGA", lga_code_2021)) %>% 
+  left_join(lga_pop %>% select(lga_code_2021, tot_p_p), by="lga_code_2021")
+
+counts_yr_lga <- counts_mth_lga %>% 
+  mutate(year = year(epi_MY)) %>% 
+  group_by(year, lga) %>% 
+  summarise(total = sum(total)) %>% 
+  left_join(pop_lga, by=c("lga" = "lga_name")) %>% 
+  mutate(rate = total/tot_p_p*100000, 
+         lga = fct(lga, levels =c("Greater Geelong", "Moreland", "Moonee Valley", "Boroondara", "Banyule", "Darebin", "Yarra")))
+
+ggplot(counts_yr_lga) + 
+  geom_col(aes(x=year, y=rate, fill=lga), col="gray", position="dodge") + 
+  scale_fill_manual(values=c("orange", "red", "pink", "yellow", "green", "blue", "skyblue"), name="LGA") + 
+  scale_x_continuous(expand=c(0,0), name="") +
+  scale_y_continuous(expand=c(0,0), breaks=integer_breaks(), name="Rate per 100,000 population") + 
+  cowplot::theme_cowplot() + 
+  labs(caption = "Year 2025 to end of Nov", 
+       title = "Rate per 100,000 population by LGA and year")
+  
+
+```
+
+
+```{r}
+# Analysis of Case numbers by LGA and by risk factors
+
+mu_nephu_lga <- mu_nephu %>% 
+  group_by(epiyear, lga) %>% 
+  summarise(total = n())
+
+ggplot(mu_nephu_lga) + 
+  geom_col(aes(x=epiyear, y=total, fill=lga), position="dodge")
+
+mu_nephu_lga_rf <- mu_nephu %>% 
+  group_by(epiyear, lga, risk_factor) %>% 
+  summarise(total = n())
+
+ggplot(mu_nephu_lga_rf) + 
+  geom_col(aes(x=lga, y=total, fill=risk_factor), position="stack", col="gray") + 
+  scale_y_continuous(expand=c(0,0), breaks=integer_breaks()) + 
+  facet_grid(~epiyear) + 
+  theme(axis.text.x = element_text(angle = 45, hjust=1), 
+        legend.position = "bottom")
+
+```
+
