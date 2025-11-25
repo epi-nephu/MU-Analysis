@@ -17,11 +17,12 @@ Change the up to date of data extraction - max_date and code in the SQL code chu
 Version control:
 - tidied up for dashboard presentation inclu NEPHU logo
 - add clustering algorithm
-
+- include the 3 new inner Melbourne areas (Brunswick, Coburg and Ascot Vale) in map
+- used short version of LGA names
 
 Other changes to be coded:
 - include forecasting (2 months ahead?) or trend as a new tab page
-- include the 2 new inner Melbourne areas (Coburg and Ascot Vale) in map
+
 
 -->
 
@@ -100,7 +101,13 @@ mu_data_config <- mu_raw %>%
   rename(defn = event_classification, 
          age = age_years, 
          atsi = indigenous_status, 
-         cob = country_of_birth) %>% 
+         cob = country_of_birth, 
+         exp_site = risk_factors_exposure_site, 
+         exp_site_latitude = risk_factors_exposure_site_latitude, 
+         exp_site_longitude = risk_factors_exposure_site_longitude, 
+         exp_site_city = city_2, 
+         exp_site_postcode = postcode_2, 
+         exp_site_lga = lga_2) %>% 
   mutate(agecat5 = case_when(between(age, 0, 4) ~ "0-4", 
                              between(age, 5, 9) ~ "5-9",
                              between(age, 10, 14) ~ "10-14",
@@ -320,19 +327,20 @@ exp_lga_levels = c("Bayside", "Kingston", "Moonee Valley", "Frankston", "Queensc
 
 risk_factor_levels = c("Holiday residence", "Travel within Australia", "Residence", "Risk unable to be determined")
 
-endemic_areas = c("Bellarine Peninsula", "Mornington Peninsula", "Frankston area", "Geelong suburbs", "Gippsland", "Phillip Island", "Surf Coast", 
-                  "Inner Melbourne", "Melbourne South East suburbs", "Interstate", "Overseas", "Other", "No travel to known endemic areas")
+endemic_areas = c("Bellarine Peninsula", "Mornington Peninsula", "Frankston area", "Geelong suburbs", "Gippsland", "Phillip Island", 
+                  "Surf Coast", "Inner Melbourne", "Melbourne South East suburbs", "Interstate", "Overseas", 
+                  "Other", "No travel to known endemic areas")
 
 
 mu_nephu_risk <- mu_nephu %>% 
-  select(event_id, event_date, risk_factor, primary_exposure, risk_factors_exposure_site, name, city_2, postcode_2, lga_2, risk_factors_exposure_site_longitude, 
-         risk_factors_exposure_site_latitude, endemic_areas_12months, events_caused_infection_type, exposure_start, exposure_end) %>% 
+  select(event_id, event_date, risk_factor, primary_exposure, exp_site, name, exp_site_city, exp_site_postcode, exp_site_lga, 
+         exp_site_longitude, exp_site_latitude, endemic_areas_12months, events_caused_infection_type, exposure_start, exposure_end) %>% 
   mutate(risk_factor = factor(risk_factor, levels=risk_factor_levels), 
-         exp_lga = str_remove(lga_2, pattern="[:space:]\\([:upper:]\\)"), 
-         exp_lga = case_when(lga_2=="Unknown Victoria" ~ "Mornington Peninsula", # recode as names states Mornington Peninsula
-                             lga_2=="Queenscliffe" ~ "Queenscliff", # correction of lga spelling
-                             TRUE ~ exp_lga), 
-         exp_lga = factor(exp_lga, levels=exp_lga_levels), 
+         exp_site_lga = str_remove(exp_site_lga, pattern="[:space:]\\([:upper:]\\)"), 
+         exp_site_lga = case_when(exp_site_lga=="Unknown Victoria" ~ "Mornington Peninsula", # recode as names states Mornington Peninsula
+                             exp_site_lga=="Queenscliffe" ~ "Queenscliff", # correction of lga spelling
+                             TRUE ~ exp_site_lga), 
+         exp_site_lga = factor(exp_site_lga, levels=exp_lga_levels), 
          endemic_areas_12months = factor(endemic_areas_12months, levels=endemic_areas))
 
 ```
@@ -487,17 +495,28 @@ nephu_boundary_4326.sf <- st_transform(nephu_boundary.sf, crs=4326)
 
 ```{r}
 # Create residential and exp locations sf objects
+map_cutoff_start_date <- max_date - months(cluster_cutoff_months)
 
-mu_exp_loc <- mu_nephu %>% 
-  select(event_id, event_date, postcode, lga, latitude, longitude, risk_factor, primary_exposure, risk_factors_exposure_site, city_2, postcode_2, lga_2, 
-         risk_factors_exposure_site_latitude, risk_factors_exposure_site_longitude) 
+map_data <- mu_data_config %>% 
+  filter(lga %in% nephu_lgas) %>% 
+  remove_empty("cols") %>% 
+  filter(between(event_date, map_cutoff_start_date, max_date)) %>% 
+  group_by(event_id) %>% 
+  arrange(desc(primary_exposure=="Primary"), # TRUE/FALSE becomes 1/0
+          desc(primary_exposure)) %>% # next-best logic
+  select(event_id, event_date, postcode, lga, latitude, longitude, 
+         risk_factor, primary_exposure, exp_site, exp_site_city, exp_site_postcode, exp_site_lga, 
+         exp_site_latitude, exp_site_longitude) %>% 
+  slice(1) %>% 
+  ungroup
 
-mu_exp.sf <- mu_exp_loc %>% 
-  filter(!is.na(risk_factors_exposure_site_latitude)) %>% 
-  st_as_sf(., coords=c("risk_factors_exposure_site_longitude", "risk_factors_exposure_site_latitude"), crs=st_crs(4326))
+mu_exp.sf <- map_data %>% 
+  filter(!is.na(exp_site_latitude)) %>% 
+  st_as_sf(., coords=c("exp_site_longitude", "exp_site_latitude"), crs=st_crs(4326))
 
-mu_resid.sf <- mu_exp_loc %>% 
+mu_resid.sf <- map_data %>% 
   st_as_sf(., coords=c("longitude", "latitude"), crs=4326) 
+
 
 ```
 
@@ -509,16 +528,7 @@ library(geosphere)
 library(dbscan)
 library(leaflet)
 
-cluster_cutoff_date <- max_date - months(cluster_cutoff_months)
-
-cluster_data <- mu_data_config %>% 
-  filter(lga %in% nephu_lgas) %>% 
-  remove_empty("cols") %>% 
-  distinct(event_id, .keep_all=TRUE) %>% 
-  filter(event_date >= cluster_cutoff_date)
-  
-
-cluster_coords_mat <- as.matrix(cluster_data[, c("longitude", "latitude")])
+cluster_coords_mat <- as.matrix(map_data[, c("longitude", "latitude")])
 
 dist_matrix <- distm(cluster_coords_mat, fun=distHaversine)
 
@@ -527,22 +537,26 @@ radius_metres <- 2000
 cluster_detect <- dbscan::dbscan(as.dist(dist_matrix), eps=radius_metres, minPts=cluster_min_pts)
 
 # Add cluster IDs to cluster_data
-cluster_data$cluster <- cluster_detect$cluster
-
+cluster_data <- map_data %>% 
+  mutate(cluster = cluster_detect$cluster) %>% 
+  filter(cluster>0) %>% 
+  mutate(cluster = factor(cluster))
 
 # convert to sf object
 cluster_data.sf <- st_as_sf(cluster_data, coords=c("longitude", "latitude"))
-cluster_group.sf <- filter(cluster_data.sf, cluster>0)
 
 label_cluster_resid <- sprintf(
   "ID: %s<br/>Date: %s<br/>Risk: %s<br/>Exposure LGA: %s<br/>Cluster Number: %s", 
-  cluster_group.sf$event_id, cluster_group.sf$event_date, cluster_group.sf$risk_factor, cluster_group.sf$lga_2, cluster_group.sf$cluster
+  cluster_data.sf$event_id, cluster_data.sf$event_date, cluster_data.sf$risk_factor, cluster_data.sf$exp_site_lga, cluster_data.sf$cluster
   ) %>% lapply(htmltools::HTML)
 
 cluster_pal <- colorFactor(
-  palette = c("red", "orange"), 
-  domain = cluster_group.sf$cluster
+  palette = c("red", "coral3", "darkgreen", "maroon", "purple", "orangered"),
+  levels=levels(cluster_data.sf$cluster), 
+  domain = cluster_data.sf$cluster
 )
+
+cluster_pal <- colorFactor("Accent", levels=levels(cluster_data.sf$cluster), domain=NULL)
 
 ```
 
@@ -562,12 +576,12 @@ A clustering algorithm is also applied - case residential locations taken from t
 # format setup for mouse hover label
 label_resid <- sprintf(
   "ID: %s<br/>Date: %s<br/>Risk: %s<br/>Exposure LGA: %s", 
-  mu_resid.sf$event_id, mu_resid.sf$event_date, mu_resid.sf$risk_factor, mu_resid.sf$lga_2
+  mu_resid.sf$event_id, mu_resid.sf$event_date, mu_resid.sf$risk_factor, mu_resid.sf$exp_site_lga
   ) %>% lapply(htmltools::HTML)
   
 label_exp <- sprintf(
   "ID: %s<br/>Date: %s<br/>Risk: %s<br/>Exposure LGA: %s", 
-  mu_exp.sf$event_id, mu_exp.sf$event_date, mu_exp.sf$risk_factor, mu_exp.sf$lga_2
+  mu_exp.sf$event_id, mu_exp.sf$event_date, mu_exp.sf$risk_factor, mu_exp.sf$exp_site_lga
   ) %>% lapply(htmltools::HTML)
 
 label_innermelb <- c("Inner Melbourne MU endemic area") %>% lapply(htmltools::HTML)
@@ -581,11 +595,12 @@ icons <- awesomeIcons(
 )
 
 
+
 leaflet() %>% 
   addTiles() %>% 
   addCircles(data=mu_resid.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Residential", label=label_resid) %>% 
   addAwesomeMarkers(data=mu_exp.sf, icon=icons, group="Exposure", label=label_exp) %>% 
-  addCircles(data=cluster_group.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Cluster", color="red", 
+  addCircleMarkers(data=cluster_data.sf, radius=10, opacity=0.8, fillOpacity=0.6, group="Cluster", color=cluster_pal(cluster_data.sf$cluster), 
              label=label_cluster_resid) %>% 
   addPolygons(data=innermelb_sal.sf, color="red", label=label_innermelb) %>% 
   addPolygons(data=innermelb_new_sal.sf, color="red", dashArray="5, 10", label=label_innermelb) %>% 
@@ -594,6 +609,14 @@ leaflet() %>%
                    options=layersControlOptions(collapsed=FALSE)) %>% 
   setView(lng = 145.45, lat = -37.77, zoom=9)
   
+
+pal <- colorFactor("plasma", levels = levels(data_map$tot_pob_cat))
+
+leaflet() %>%
+  addTiles() %>%
+  setView(lng = -0.49, lat = 38.34, zoom = 14) %>%
+  addPolygons(data = data_map, color = pal(data_map$tot_pob_cat), stroke = 1, opacity = 0.8) 
+ 
   # # setView(lat=-38, lng=145, zoom=10) %>% 
   # addPolygons(color="#444444", weight=1, opacity=1.0, fillOpacity=0.8, smoothFactor=0.5, 
   #             fillColor= ~colorNumeric(rev(colorRamps::blue2red(6)), domain=pct)(pct), 
