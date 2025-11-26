@@ -48,10 +48,13 @@ knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, fig.height=6, 
 ```
 
 ```{r set params}
+# Date and period parameters
 start_date <- ymd("2022-01-01")
 min_date <- start_date
 max_date <- ymd("2025-11-24")
 min_date_1yr <- max_date - years(1) + days(1)
+
+# cluster parameters
 cluster_cutoff_months <- 12
 cluster_min_pts <- 3
 
@@ -153,11 +156,20 @@ mu_data_config <- mu_raw %>%
 mu_nephu <- mu_data_config %>% 
   filter(lga %in% nephu_lgas) %>% 
   remove_empty("cols") %>% 
-  filter(primary_exposure=="Primary") %>% 
-  distinct(event_id, .keep_all=TRUE)
+  #filter(between(event_date, map_cutoff_start_date, max_date)) %>% 
+  group_by(event_id) %>% 
+  arrange(desc(primary_exposure=="Primary"), # TRUE/FALSE becomes 1/0
+          desc(primary_exposure)) %>% # next-best logic
+  # select(event_id, event_date, postcode, lga, latitude, longitude, 
+  #        risk_factor, primary_exposure, exp_site, exp_site_city, exp_site_postcode, exp_site_lga, 
+  #        exp_site_latitude, exp_site_longitude) %>% 
+  slice(1) %>% 
+  ungroup
+
+
 
 mu_vic <- mu_data_config %>% 
-  filter(primary_exposure=="Primary") %>% 
+  #filter(primary_exposure=="Primary") %>% 
   distinct(event_id, .keep_all=TRUE)
 
 mu_lphu <- mu_vic %>% 
@@ -170,10 +182,10 @@ mu_lphu <- mu_vic %>%
 ``` {r monthly counts}
 mu_nephu_vic_counts_mth <- mu_vic %>% 
   group_by(epi_MY) %>% 
-  summarise(total = n()) %>% 
+  summarise(total_vic = n()) %>% 
   left_join(mu_nephu %>% group_by(epi_MY) %>% summarise(total_nephu = n()), by="epi_MY") %>% 
   replace_na(replace=list(total_nephu=0)) %>% 
-  mutate(pct_nephu = round(total_nephu/total*100, 1))
+  mutate(pct_nephu = round(total_nephu/total_vic*100, 1))
 
 
 mu_nephu_vic_counts_yr <- tabyl(mu_vic, epiyear) %>% 
@@ -270,10 +282,12 @@ cumsum_data <- mu_nephu_vic_counts_mth %>%
   mutate(yr = year(epi_MY), 
          mth = month(epi_MY, label=TRUE, abbr=TRUE)) %>% 
   group_by(yr) %>% 
-  mutate(cum_count = cumsum(total_nephu))
+  mutate(cum_count = cumsum(total_nephu), 
+         cum_vic = cumsum(total_vic))
 
 cumsum_plot <- ggplot(cumsum_data) + 
   geom_line(aes(x=mth, y=cum_count, group=factor(yr), col=factor(yr)), linewidth=1) + 
+  scale_y_continuous(expand=c(0,0), breaks=seq(0, 60, 5)) + 
   cowplot::theme_cowplot() + 
   theme(plot.title = element_text(size=12)) + 
   labs(
@@ -351,6 +365,7 @@ mu_nephu_risk <- mu_nephu %>%
 
 risk_table <- tabyl(mu_nephu_risk, risk_factor) %>% 
   mutate(percent = round(100*percent, 0)) %>% 
+  select(-valid_percent) %>% 
   filter(!is.na(risk_factor)) 
   
 
@@ -366,7 +381,8 @@ flextable(risk_table) %>%
 cat("title=", paste0("Monthly cases by risk factor from ", format(min_date, '%b %Y'), " - ", format(max_date, '%b %Y')))
 
 mu_nephu_risk_counts <- tabyl(mu_nephu, epi_MY, risk_factor) %>% 
-  pivot_longer(cols=-epi_MY, names_to="riskfactor", values_to="count")
+  pivot_longer(cols=-epi_MY, names_to="riskfactor", values_to="count") %>% 
+  filter(riskfactor!="NA_")
 
 rf_plot <- ggplot(data = mu_nephu_risk_counts) +
   geom_col(aes(x = epi_MY, y=count, fill = riskfactor), col="gray") + 
@@ -409,7 +425,7 @@ flextable(risk_endemic_areas_table) %>%
 ```{r}
 #| title: "Exposure by LGAs for NEPHU cases"
 
-tabyl(mu_nephu_risk %>% filter(!is.na(risk_factor)), risk_factor, exp_lga) %>% 
+tabyl(mu_nephu_risk %>% filter(!is.na(risk_factor)), risk_factor, exp_site_lga) %>% 
   flextable() %>% 
   set_header_labels(risk_factor = "", NA_ = "") %>% 
   add_header_row(values=c("Risk Factor", "Endemic LGAs", "", "", "", "", "", "", "", "", 
@@ -454,19 +470,8 @@ flextable(risk_utd_table_short) %>%
 
 load(file.path(str_extract(getwd(), "^.+Epidemiology"), "Population Health Data/NEPHU Maps", "NEPHU_basemaps_sf.RData"))
 
-#aus_poa_shp <- readRDS(here("Data", "aus_poa_shapefiles.rds"))
 vic_sal_shp <- readRDS(here("Data", "vic_sal_shapefiles_sf.rds")) %>% 
   mutate(sal_name = str_remove(sal_name, "\\s\\(Vic\\.\\)")) 
-
-# create polygon for inner melbourne endemic area - using POA
-# mu_innermelb_poa.sf <- aus_poa_shp %>% 
-#   # filter(as.numeric(POA_CODE21) %in% c(3039, 3040, 3041, 3044, 3055)) %>% 
-#   filter(POA_CODE21 %in% c("3039", "3040", "3041", "3044", "3055")) %>% 
-#   st_transform(crs=4326)
-# 
-# mu_new_innermelb_poa.sf <- aus_poa_shp %>% 
-#   filter(POA_CODE21 %in% c("3058", "3032")) %>% 
-#   st_transform(crs=4326)
 
 # create polygon for inner melbourne endemic area - using SAL
 innermelb_sal.sf <- vic_sal_shp %>% 
@@ -479,36 +484,17 @@ innermelb_new_sal.sf <- vic_sal_shp %>%
 
 nephu_boundary_4326.sf <- st_transform(nephu_boundary.sf, crs=4326)
 
-# label_innermelb <- c("Inner Melbourne MU endemic area") %>% lapply(htmltools::HTML)
-# leaflet() %>% 
-#   addTiles() %>% 
-#   #addCircles(data=mu_resid.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Residential", label=label_resid) %>% 
-#   #addAwesomeMarkers(data=mu_exp.sf, icon=icons, group="Exposure", label=label_exp) %>% 
-#   #addCircles(data=cluster_group.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Cluster", color="red", 
-#   #           label=label_cluster_resid) %>% 
-#   addPolygons(data=mu_innermelb_sal.sf, color="red", label=label_innermelb) %>% 
-#   addPolygons(data=mu_innermelb_poa.sf, color="blue", label=label_innermelb) %>% 
-#   addPolygons(data=mu_new_innermelb_poa.sf, color="blue", dashArray="5, 10", label=label_innermelb) %>% 
-#   addPolygons(data=nephu_boundary_4326.sf, color="black", fill=FALSE)
-
 ```
 
 ```{r}
 # Create residential and exp locations sf objects
 map_cutoff_start_date <- max_date - months(cluster_cutoff_months)
 
-map_data <- mu_data_config %>% 
-  filter(lga %in% nephu_lgas) %>% 
-  remove_empty("cols") %>% 
+map_data <- mu_nephu %>% 
   filter(between(event_date, map_cutoff_start_date, max_date)) %>% 
-  group_by(event_id) %>% 
-  arrange(desc(primary_exposure=="Primary"), # TRUE/FALSE becomes 1/0
-          desc(primary_exposure)) %>% # next-best logic
   select(event_id, event_date, postcode, lga, latitude, longitude, 
          risk_factor, primary_exposure, exp_site, exp_site_city, exp_site_postcode, exp_site_lga, 
-         exp_site_latitude, exp_site_longitude) %>% 
-  slice(1) %>% 
-  ungroup
+         exp_site_latitude, exp_site_longitude)
 
 mu_exp.sf <- map_data %>% 
   filter(!is.na(exp_site_latitude)) %>% 
@@ -556,7 +542,7 @@ cluster_pal <- colorFactor(
   domain = cluster_data.sf$cluster
 )
 
-cluster_pal <- colorFactor("Accent", levels=levels(cluster_data.sf$cluster), domain=NULL)
+#cluster_pal <- colorFactor("Accent", levels=levels(cluster_data.sf$cluster), domain=NULL)
 
 ```
 
@@ -573,7 +559,7 @@ A clustering algorithm is also applied - case residential locations taken from t
 ```{r}
 # #| title: "Interactive map of M. ulcerans cases residential and exposure sites"
 
-# format setup for mouse hover label
+# format setup for mouse hover label (tooltip)
 label_resid <- sprintf(
   "ID: %s<br/>Date: %s<br/>Risk: %s<br/>Exposure LGA: %s", 
   mu_resid.sf$event_id, mu_resid.sf$event_date, mu_resid.sf$risk_factor, mu_resid.sf$exp_site_lga
@@ -595,7 +581,6 @@ icons <- awesomeIcons(
 )
 
 
-
 leaflet() %>% 
   addTiles() %>% 
   addCircles(data=mu_resid.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Residential", label=label_resid) %>% 
@@ -609,31 +594,13 @@ leaflet() %>%
                    options=layersControlOptions(collapsed=FALSE)) %>% 
   setView(lng = 145.45, lat = -37.77, zoom=9)
   
-
-pal <- colorFactor("plasma", levels = levels(data_map$tot_pob_cat))
-
-leaflet() %>%
-  addTiles() %>%
-  setView(lng = -0.49, lat = 38.34, zoom = 14) %>%
-  addPolygons(data = data_map, color = pal(data_map$tot_pob_cat), stroke = 1, opacity = 0.8) 
- 
-  # # setView(lat=-38, lng=145, zoom=10) %>% 
-  # addPolygons(color="#444444", weight=1, opacity=1.0, fillOpacity=0.8, smoothFactor=0.5, 
-  #             fillColor= ~colorNumeric(rev(colorRamps::blue2red(6)), domain=pct)(pct), 
-  #             highlightOptions = highlightOptions(color="white", weight=2, bringToFront = TRUE), 
-  #             label = labels, 
-# color = "blue",  # Border color
-#     weight = 2,      # Border thickness
-#     dashArray = "5, 10",  # Define the dash pattern (5px dash, 10px gap)
-#     fillColor = "lightblue",  # Fill color
-#     fillOpacity = 0.5         # Fill opacity) %>% # alt: ~variable or ~function(vars)
-  # addLegend(pal = colorNumeric(rev(colorRamps::blue2red(6)), nephu_bcs2periods_poa.sf$pct), 
-  #           values = ~nephu_bcs2periods_poa.sf$pct, title="%", opacity=1, position="bottomright")
-
-
 ```
 
 # Comparison with endemic-areas
+
+## Row
+
+### Column1
 
 ```{r}
 inclu_lga <- c("Moonee Valley", "Moreland", "Greater Geelong", "Darebin", "Yarra", "Banyule", "Boroondara")
@@ -642,10 +609,6 @@ inclu_lga <- c("Moonee Valley", "Moreland", "Greater Geelong", "Darebin", "Yarra
 
 mu_in_north <- mu_data_config %>% 
   filter(lga %in% inclu_lga)
-
-# mu_west_barwon <- mu_clean %>% 
-#   filter(lga %in% inclu_west_barwon)
-
 
 
 # Construct a master df with all months from start date to end date
@@ -711,6 +674,8 @@ cumsum_plot
 
 ```
 
+### Column2
+
 ```{r}
 root_folder <- str_extract(getwd(), "^.+Epidemiology")
 
@@ -747,6 +712,7 @@ ggplot(counts_yr_lga) +
 
 ```
 
+# Extra
 
 ```{r}
 # Analysis of Case numbers by LGA and by risk factors
