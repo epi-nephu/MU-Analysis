@@ -19,6 +19,7 @@ Version control:
 - add clustering algorithm
 - include the 3 new inner Melbourne areas (Brunswick, Coburg and Ascot Vale) in map
 - used short version of LGA names
+- updated risk factors and exposure sites display
 
 Other changes to be coded:
 - include forecasting (2 months ahead?) or trend as a new tab page
@@ -51,7 +52,7 @@ knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, fig.height=6, 
 # Date and period parameters
 start_date <- ymd("2022-01-01")
 min_date <- start_date
-max_date <- ymd("2025-11-24")
+max_date <- ymd("2025-11-30")
 min_date_1yr <- max_date - years(1) + days(1)
 
 # cluster parameters
@@ -156,17 +157,14 @@ mu_data_config <- mu_raw %>%
 mu_nephu <- mu_data_config %>% 
   filter(lga %in% nephu_lgas) %>% 
   remove_empty("cols") %>% 
-  #filter(between(event_date, map_cutoff_start_date, max_date)) %>% 
   group_by(event_id) %>% 
   arrange(desc(primary_exposure=="Primary"), # TRUE/FALSE becomes 1/0
           desc(primary_exposure)) %>% # next-best logic
-  # select(event_id, event_date, postcode, lga, latitude, longitude, 
-  #        risk_factor, primary_exposure, exp_site, exp_site_city, exp_site_postcode, exp_site_lga, 
-  #        exp_site_latitude, exp_site_longitude) %>% 
   slice(1) %>% 
   ungroup
 
-
+mu_nephu_1yr <- mu_nephu %>% 
+   filter(between(event_date, min_date_1yr, max_date))
 
 mu_vic <- mu_data_config %>% 
   #filter(primary_exposure=="Primary") %>% 
@@ -303,13 +301,14 @@ ggplotly(cumsum_plot)
 # Demographics and Risk factors {orientation="columns"}
 
 ## Column {width=40%}
-### Row {height=70%}
+### Row {height=65%}
 
 ```{r pyramid}
 #| title: "Demographic distribution of cases in NEPHU"
 
 # subset data
 pyramid.dat <- mu_nephu %>% 
+  #filter(between(event_date, min_date_1yr, max_date)) %>% 
   select(age, agecat5, sex, defn) %>% 
   filter(sex %in% c("Male", "Female")) %>% 
   mutate(sex = fct_rev(fct_drop(sex)), 
@@ -331,11 +330,12 @@ apyramid::age_pyramid(data=pyramid.dat, age_group="agecat5", split_by="sex",
 ### Row {height=30%}
 
 ```{r risk factors}
-resid_risk <- mu_nephu %>% 
-  filter(risk_factor=="Residence")
 
-aus_travel_risk <- mu_nephu %>% 
-  filter(risk_factor=="Travel within Australia")
+# resid_risk <- mu_nephu %>% 
+#   filter(risk_factor=="Residence")
+# 
+# aus_travel_risk <- mu_nephu %>% 
+#   filter(risk_factor=="Travel within Australia")
 
 exp_lga_levels = c("Bayside", "Kingston", "Moonee Valley", "Frankston", "Queenscliff", "Greater Geelong", "Surf Coast", "Mornington Peninsula", "East Gippsland", "Maroondah", "Banyule", "Hume", "Whitehorse", "Yarra Ranges")
 
@@ -363,15 +363,30 @@ mu_nephu_risk <- mu_nephu %>%
 ``` {r}
 #| title: "Risk factors for NEPHU cases"
 
-risk_table <- tabyl(mu_nephu_risk, risk_factor) %>% 
+risk_table_previousyrs <- mu_nephu_risk %>% 
+  filter(between(event_date, start_date, min_date_1yr-days(1))) %>% 
+  tabyl(., risk_factor) %>% 
+  mutate(percent = round(100*percent, 0)) %>% 
+  filter(!is.na(risk_factor)) %>% 
+  rename(n_previousyrs = n, 
+         pct_previousyrs = percent)
+
+risk_table_recent1yr <- mu_nephu_risk %>% 
+  filter(between(event_date, min_date_1yr, max_date)) %>% 
+  tabyl(., risk_factor) %>% 
   mutate(percent = round(100*percent, 0)) %>% 
   select(-valid_percent) %>% 
-  filter(!is.na(risk_factor)) 
+  filter(!is.na(risk_factor)) %>% 
+  rename(n_recent1yr = n, 
+         pct_recent1yr = percent)
   
+combined_risk_table <- left_join(risk_table_previousyrs, risk_table_recent1yr, by="risk_factor")
 
-flextable(risk_table) %>% 
-  set_header_labels(risk_factor = "Risk factor", n = "Cases", percent = "%") %>% 
+flextable(combined_risk_table) %>% 
+  set_header_labels(risk_factor = "Risk factor", n_previousyrs = "Cases", pct_previousyrs = "%", n_recent1yr = "Cases", pct_recent1yr = "%") %>% 
+  add_header_row(., values=c("", "Previous years", "Most recent\n1 yr"), colwidths = c(1, 2, 2), top=TRUE) %>% 
   autofit()
+
 ```
 
 
@@ -382,7 +397,8 @@ cat("title=", paste0("Monthly cases by risk factor from ", format(min_date, '%b 
 
 mu_nephu_risk_counts <- tabyl(mu_nephu, epi_MY, risk_factor) %>% 
   pivot_longer(cols=-epi_MY, names_to="riskfactor", values_to="count") %>% 
-  filter(riskfactor!="NA_")
+  filter(riskfactor!="NA_") %>% 
+  mutate(riskfactor = factor(riskfactor, levels=risk_factor_levels))
 
 rf_plot <- ggplot(data = mu_nephu_risk_counts) +
   geom_col(aes(x = epi_MY, y=count, fill = riskfactor), col="gray") + 
@@ -488,7 +504,7 @@ nephu_boundary_4326.sf <- st_transform(nephu_boundary.sf, crs=4326)
 
 ```{r}
 # Create residential and exp locations sf objects
-map_cutoff_start_date <- max_date - months(24)
+map_cutoff_start_date <- max_date - months(12)
 
 map_data <- mu_nephu %>% 
   filter(between(event_date, map_cutoff_start_date, max_date)) %>% 
@@ -502,6 +518,9 @@ mu_exp.sf <- map_data %>%
 
 mu_resid.sf <- map_data %>% 
   st_as_sf(., coords=c("longitude", "latitude"), crs=4326) 
+
+mu_resid_all.sf <- mu_nephu %>% 
+  st_as_sf(., coords=c("longitude", "latitude"), crs=4326)
 
 
 ```
@@ -547,14 +566,18 @@ cluster_pal <- colorFactor(
 ```
 
 
-Map below shows both the residential and primary risk exposure locations of NEPHU *M. ulcerans* cases notified during the whole data period: `r format(min_date, '%b %Y')` - `r format(max_date, '%b %Y')`. This is an interactive map allowing you to zoom in and out and look at further details when hovering above the markers.  
+Residential and primary risk exposure locations of NEPHU *M. ulcerans* cases notified during data period: `r format(min_date_1yr, '%b %Y')` - `r format(max_date, '%b %Y')`. 
+Clusters - calculated as min of 3 residential locations within 2km radius.
 
+<!--
 Case residential sites denoted by blue dots.  
 Case exposure sites denoted by lightblue markers with red cross.  
 Inner Melbourne endemic area (Brunswick West, Pascoe Vale South, Essendon, Moonee Ponds and Strathmore) denoted by area marked in opaque-red.  
 Area marked in thick black line represents the boundary of the NEPHU catchment.
 
 A clustering algorithm is also applied - case residential locations taken from the data of most recent `r cluster_cutoff_months` months which are clustered together within a 2km radius with a min of `r cluster_min_pts` locations. These are denoted in red dots and can be used to further examine if there is a risk of the area becoming an MU endemic area.
+
+-->
 
 ```{r}
 # #| title: "Interactive map of M. ulcerans cases residential and exposure sites"
@@ -564,7 +587,12 @@ label_resid <- sprintf(
   "ID: %s<br/>Date: %s<br/>Risk: %s<br/>Exposure LGA: %s", 
   mu_resid.sf$event_id, mu_resid.sf$event_date, mu_resid.sf$risk_factor, mu_resid.sf$exp_site_lga
   ) %>% lapply(htmltools::HTML)
-  
+
+label_resid_all <- sprintf(
+  "ID: %s<br/>Date: %s<br/>Risk: %s<br/>Exposure LGA: %s", 
+  mu_resid_all.sf$event_id, mu_resid_all.sf$event_date, mu_resid_all.sf$risk_factor, mu_resid_all.sf$exp_site_lga
+  ) %>% lapply(htmltools::HTML)
+
 label_exp <- sprintf(
   "ID: %s<br/>Date: %s<br/>Risk: %s<br/>Exposure LGA: %s", 
   mu_exp.sf$event_id, mu_exp.sf$event_date, mu_exp.sf$risk_factor, mu_exp.sf$exp_site_lga
@@ -573,29 +601,30 @@ label_exp <- sprintf(
 label_innermelb <- c("Inner Melbourne MU endemic area") %>% lapply(htmltools::HTML)
 
 # combination leaflet
-icons <- awesomeIcons(
+exp_icon <- awesomeIcons(
   icon = 'close', 
   iconColor = 'red', 
   library = 'ion', 
   markerColor="lightblue", 
-  squareMarker = TRUE
+  squareMarker = FALSE
 )
 
-exp_icon <- makeAwesomeIcon(icon = "pin", markerColor = "lightblue", library = "ion")
+#exp_icon <- makeAwesomeIcon(icon = "pin", markerColor = "lightblue", library = "ion")
 
 
 leaflet() %>% 
   addTiles() %>% 
-  addCircles(data=mu_resid.sf, radius=5, opacity=0.8, fillOpacity=0.6, group="Residential", label=label_resid) %>% 
+  addCircles(data=mu_resid.sf, radius=6, opacity=0.8, fillOpacity=0.6, group="Residential", label=label_resid) %>% 
   addAwesomeMarkers(data=mu_exp.sf, icon=exp_icon, group="Exposure", label=label_exp) %>% 
   addCircleMarkers(data=cluster_data.sf, radius=10, opacity=0.8, fillOpacity=0.6, group="Cluster", color=cluster_pal(cluster_data.sf$cluster), 
              label=label_cluster_resid) %>% 
+  addCircles(data=mu_resid_all.sf, radius=6, opacity=0.8, fillOpacity=0.6, group="Residential (All)", label=label_resid_all) %>% 
   addPolygons(data=innermelb_sal.sf, color="red", label=label_innermelb) %>% 
   addPolygons(data=innermelb_new_sal.sf, color="red", dashArray="5, 10", label=label_innermelb, weight=3) %>% 
   addPolygons(data=nephu_boundary_4326.sf, color="black", fill=FALSE) %>% 
-  addLayersControl(overlayGroups=c("Residential", "Exposure", "Cluster"), 
+  addLayersControl(overlayGroups=c("Residential", "Exposure", "Cluster", "Residential (All)"), 
                    options=layersControlOptions(collapsed=FALSE)) %>% 
-  setView(lng = 145.45, lat = -37.77, zoom=9)
+  setView(lng = 145.45, lat = -37.77, zoom=10)
   
 ```
 
@@ -664,7 +693,7 @@ cumsum_plot <- ggplot(cumsum_data) +
   scale_x_date(expand=c(0,0), date_breaks="3 months", date_minor_breaks="month", date_labels="%b %Y", name="") +
   scale_y_continuous(expand=c(0,0), breaks=integer_breaks()) + 
   cowplot::theme_cowplot() + 
-  theme(plot.title = element_text(size=12), 
+  theme(plot.title = element_text(size=14), 
         plot.caption = element_text(size=11), 
         axis.text.x = element_text(angle = 45, hjust=1)) + 
   labs(title="Cumulative monthly case numbers per year", 
@@ -673,7 +702,7 @@ cumsum_plot <- ggplot(cumsum_data) +
          y="Cumulative case numbers", 
          col="LGA")
 
-cumsum_plot
+ggplotly(cumsum_plot)
 
 ```
 
@@ -709,17 +738,20 @@ ggplot(counts_yr_lga) +
   scale_x_continuous(expand=c(0,0), name="") +
   scale_y_continuous(expand=c(0,0), breaks=integer_breaks(), name="Rate per 100,000 population") + 
   cowplot::theme_cowplot() + 
-  theme(plot.title = element_text(size=12), 
-        plot.caption = element_text(size=11)) + 
+  theme(plot.title = element_text(size=14), 
+        plot.caption = element_text(size=11), 
+        legend.position="bottom") + 
   labs(caption = "Year 2025 to end of Nov", 
        title = "Rate per 100,000 population by LGA and year")
   
 
 ```
 
-# Extra
 
-```{r}
+
+```{r, eval=FALSE}
+# EXTRA
+
 # Analysis of Case numbers by LGA and by risk factors
 
 mu_nephu_lga <- mu_nephu %>% 
@@ -731,14 +763,20 @@ ggplot(mu_nephu_lga) +
 
 mu_nephu_lga_rf <- mu_nephu %>% 
   group_by(epiyear, lga, risk_factor) %>% 
-  summarise(total = n())
+  summarise(total = n()) %>% 
+  ungroup() %>% 
+  filter(!is.na(risk_factor)) %>% 
+  mutate(risk_factor = factor(risk_factor, levels=risk_factor_levels))
 
 ggplot(mu_nephu_lga_rf) + 
   geom_col(aes(x=lga, y=total, fill=risk_factor), position="stack", col="gray") + 
   scale_y_continuous(expand=c(0,0), breaks=integer_breaks()) + 
   facet_grid(~epiyear) + 
   theme(axis.text.x = element_text(angle = 45, hjust=1), 
-        legend.position = "bottom")
+        legend.position = "bottom") + 
+  labs(x="", 
+       y="Case numbers", 
+       fill="Risk factor")
 
 ```
 
