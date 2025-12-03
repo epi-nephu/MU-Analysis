@@ -20,6 +20,8 @@ Version control:
 - include the 3 new inner Melbourne areas (Brunswick, Coburg and Ascot Vale) in map
 - used short version of LGA names
 - updated risk factors and exposure sites display
+- facility to recode certain exp locations GPS coordinates
+
 
 Other changes to be coded:
 - include forecasting (2 months ahead?) or trend as a new tab page
@@ -38,8 +40,8 @@ library(plotly)
 ```
 
 
-```{r dbcon, include=FALSE, eval=TRUE}
-con <- DBI::dbConnect(odbc::odbc(), "PHAR proxy")
+```{r dbcon, include=FALSE, eval=FALSE}
+con <- DBI::dbConnect(odbc::odbc(), "PHAR")
 
 ```
 
@@ -61,7 +63,7 @@ cluster_min_pts <- 3
 
 ```
 
-```{r extract_data, eval=TRUE}
+```{r extract_data, eval=FALSE}
 mu_raw <- DBI::dbGetQuery(con, 
                              str_glue("
                              SELECT * FROM dh_public_health.phess_release.caseevents ce 
@@ -79,8 +81,8 @@ mu_raw <- DBI::dbGetQuery(con,
 ```
 
 
-```{r, eval=FALSE}
-saveRDS(mu_raw, here::here("Data", "MU_raw_nolab.rds"))
+```{r, eval=TRUE}
+#saveRDS(mu_raw, here::here("Data", "MU_raw_nolab.rds"))
 
 mu_raw <- readRDS(here::here("Data", "MU_raw_nolab.rds"))
 
@@ -150,6 +152,12 @@ mu_data_config <- mu_raw %>%
          mth_yr = paste(epimonth, epiyear)) %>% 
   filter(defn %in% c("Confirmed", "Probable")) %>% 
   mutate(across(ends_with("tude"), ~ as.numeric(.x)))
+
+```
+
+```{r}
+# update dataset with recoded exp site coordinates
+source(here("Code", "RecodingExpSites.R"))
 
 ```
 
@@ -301,7 +309,7 @@ ggplotly(cumsum_plot)
 # Demographics and Risk factors {orientation="columns"}
 
 ## Column {width=40%}
-### Row {height=65%}
+### Row {height=60%}
 
 ```{r pyramid}
 #| title: "Demographic distribution of cases in NEPHU"
@@ -375,7 +383,7 @@ risk_table_recent1yr <- mu_nephu_risk %>%
   filter(between(event_date, min_date_1yr, max_date)) %>% 
   tabyl(., risk_factor) %>% 
   mutate(percent = round(100*percent, 0)) %>% 
-  select(-valid_percent) %>% 
+  #select(-valid_percent) %>% 
   filter(!is.na(risk_factor)) %>% 
   rename(n_recent1yr = n, 
          pct_recent1yr = percent)
@@ -422,7 +430,7 @@ ggplotly(rf_plot)
 # Exposure Locations
 
 ``` {r}
-#| title: "Exposure by endemic areas for NEPHU cases"
+cat("title=", paste0("Exposure by endemic areas for NEPHU cases from ", format(min_date, '%b %Y'), " - ", format(max_date, '%b %Y')))
 
 risk_endemic_areas_table <- tabyl(mu_nephu_risk, endemic_areas_12months) %>% 
   mutate(percent = round(100*percent, 0)) %>% 
@@ -567,6 +575,7 @@ cluster_pal <- colorFactor(
 
 
 Residential and primary risk exposure locations of NEPHU *M. ulcerans* cases notified during data period: `r format(min_date_1yr, '%b %Y')` - `r format(max_date, '%b %Y')`. 
+
 Clusters - calculated as min of 3 residential locations within 2km radius.
 
 <!--
